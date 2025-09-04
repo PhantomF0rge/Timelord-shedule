@@ -4,7 +4,6 @@ from sqlalchemy import func
 from extensions import db
 from . import bp
 
-# ленивые импорты моделей (как в API), чтобы не зависеть от разных имён файлов
 def _try_import(module_path, class_name):
     try:
         mod = __import__(module_path, fromlist=[class_name])
@@ -31,6 +30,17 @@ def admin_required(view):
         return view(*args, **kwargs)
     wrapper.__name__ = view.__name__
     return wrapper
+
+# --- helpers ---
+def _normalize_edu(v: str | None) -> str | None:
+    if not v:
+        return None
+    s = v.strip().upper()
+    if s in ("СПО", "SPO"):
+        return "SPO"
+    if s in ("ВО", "VO"):
+        return "VO"
+    return None
 
 # -------- аутентификация --------
 @bp.route("/login", methods=["GET", "POST"])
@@ -68,7 +78,7 @@ def dashboard():
             counts[key] = db.session.query(model).count()
     return render_template("admin/dashboard.html", counts=counts)
 
-# -------- группы: список/создание/редактирование --------
+# -------- группы --------
 @bp.get("/groups")
 @admin_required
 def groups_list():
@@ -84,8 +94,10 @@ def group_create():
         code = (request.form.get("code") or "").strip()
         name = (request.form.get("name") or "").strip()
         students = int(request.form.get("students_count") or 0)
-        edu_level = (request.form.get("education_level") or "").strip() or None
-        g = Group(code=code, name=name, students_count=students, education_level=edu_level)
+        edu_level = _normalize_edu(request.form.get("education_level"))
+        g = Group(code=code, name=name, students_count=students)
+        if edu_level is not None and hasattr(Group, "education_level"):
+            g.education_level = edu_level
         db.session.add(g)
         db.session.commit()
         return redirect(url_for("admin.groups_list"))
@@ -102,7 +114,9 @@ def group_edit(gid: int):
         g.code = (request.form.get("code") or "").strip()
         g.name = (request.form.get("name") or "").strip()
         g.students_count = int(request.form.get("students_count") or 0)
-        g.education_level = (request.form.get("education_level") or "").strip() or None
+        edu_level = _normalize_edu(request.form.get("education_level"))
+        if edu_level is not None and hasattr(Group, "education_level"):
+            g.education_level = edu_level
         db.session.commit()
         return redirect(url_for("admin.groups_list"))
     return render_template("admin/group_form.html", item=g)

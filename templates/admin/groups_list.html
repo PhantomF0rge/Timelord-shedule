@@ -21,11 +21,14 @@
       </thead>
       <tbody>
         {% for g in items %}
+        {% set edu = g.education_level or '' %}
         <tr>
           <td style="padding:8px;border-bottom:1px solid var(--panel-border)">{{ g.code }}</td>
           <td style="padding:8px;border-bottom:1px solid var(--panel-border)">{{ g.name }}</td>
           <td style="padding:8px;border-bottom:1px solid var(--panel-border)">{{ g.students_count or 0 }}</td>
-          <td style="padding:8px;border-bottom:1px solid var(--panel-border)">{{ g.education_level or "—" }}</td>
+          <td style="padding:8px;border-bottom:1px solid var(--panel-border)">
+            {{ 'СПО' if edu in ['SPO','СПО'] else ('ВО' if edu in ['VO','ВО'] else '—') }}
+          </td>
           <td style="padding:8px;border-bottom:1px solid var(--panel-border)">
             <a class="btn" href="{{ url_for('admin.group_edit', gid=g.id) }}">Изменить</a>
           </td>

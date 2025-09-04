@@ -13,8 +13,13 @@
       <label>Количество человек
         <input name="students_count" type="number" min="0" class="date-input" value="{{ item.students_count if item else 0 }}">
       </label>
-      <label>Уровень образования (произв.)
-        <input name="education_level" class="date-input" value="{{ item.education_level if item else '' }}" placeholder="СПО / ВО / ...">
+      <label>Уровень образования
+        <select name="education_level" class="date-input">
+          {% set edu = (item.education_level if item else '') or '' %}
+          <option value="">—</option>
+          <option value="SPO" {{ 'selected' if edu in ['SPO','СПО'] else '' }}>СПО</option>
+          <option value="VO"  {{ 'selected' if edu in ['VO','ВО'] else '' }}>ВО</option>
+        </select>
       </label>
       <div style="display:flex;gap:8px">
         <button class="btn" type="submit">Сохранить</button>
