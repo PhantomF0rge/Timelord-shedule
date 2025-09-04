@@ -1,0 +1,20 @@
+{% extends "layout.html" %}
+{% block content %}
+  <section class="hero glass">
+    <div class="hero-body">
+      <h1 class="h1">Расписание — быстро и удобно</h1>
+      <p class="lead">Найдите свою группу или преподавателя. Мы запомним выбор и покажем пары на сегодня автоматически.</p>
+      <div id="quick-result" class="quick-result" hidden></div>
+    </div>
+  </section>
+
+  <section class="legend">
+    {% include "partials/legend.html" %}
+  </section>
+
+  <section class="schedule-shell">
+    <div id="schedule-root" class="schedule-grid" data-state="empty">
+      <!-- JS отрисует сюда пары/перерывы -->
+    </div>
+  </section>
+{% endblock %}

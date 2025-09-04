@@ -1,11 +1,11 @@
-from flask import render_template, request
+from flask import render_template
 from . import bp
 
 @bp.get("/")
 def index():
-    # In future: auto-load schedule for last_group from localStorage via JS
-    return render_template("base.html")
+    # Главная с новым UI
+    return render_template("index.html")
 
 @bp.get("/health")
 def health():
-    return {"status":"ok"}
+    return {"status": "ok"}
