@@ -153,7 +153,9 @@ def suggest():
 def schedule_group(code: str):
     """
     GET /api/v1/schedule/group/<code>?date=YYYY-MM-DD&range=day|week
-    Возвращает занятия на день с автоматической вставкой «перерывов» по полной сетке TimeSlot.
+    - range=day  -> {"group_code", "date", "lessons":[...]}
+    - range=week -> {"group_code","range":"week","from","to","days":[{"date","lessons":[...]}]}
+    На каждом дне автоматически вставляем «перерывы» по полной сетке TimeSlot.
     """
     from .services.schedule_utils import insert_breaks
 
@@ -168,39 +170,136 @@ def schedule_group(code: str):
     Homework = M["Homework"]
     HAS_HOMEWORK = Homework is not None
 
-    if not all([Group, TimeSlot, Lesson]):
-        # Критичных моделей нет — отдаём пустой ответ, чтобы не падать.
-        date_str = (request.args.get("date") or "").strip()
+    def _parse_date(s):
         try:
-            target_date = _dt.strptime(date_str, "%Y-%m-%d").date() if date_str else _date.today()
+            return _dt.strptime((s or "").strip(), "%Y-%m-%d").date()
         except Exception:
-            target_date = _date.today()
-        return jsonify({"group_code": code, "date": target_date.isoformat(), "lessons": []})
+            return _date.today()
 
-    date_str = (request.args.get("date") or "").strip()
-    try:
-        target_date = _dt.strptime(date_str, "%Y-%m-%d").date() if date_str else _date.today()
-    except Exception:
-        target_date = _date.today()
+    rng = (request.args.get("range") or "day").lower()
+    anchor_date = _parse_date(request.args.get("date"))
 
-    # Группа
+    # критичные модели
+    if not all([Group, TimeSlot, Lesson]):
+        if rng == "week":
+            # неделя: пустые дни
+            dow = anchor_date.weekday()
+            monday = anchor_date - _td(days=dow)
+            days = [(monday + _td(days=i)).isoformat() for i in range(7)]
+            return jsonify({
+                "group_code": code, "range": "week",
+                "from": days[0], "to": days[-1],
+                "days": [{"date": d, "lessons": []} for d in days]
+            })
+        return jsonify({"group_code": code, "date": anchor_date.isoformat(), "lessons": []})
+
+    # найти группу
     group = (
-        db.session.query(Group)
-        .filter(func.lower(Group.code) == code.lower())
-        .first()
+        db.session.query(Group).filter(func.lower(Group.code) == code.lower()).first()
     ) or (
-        db.session.query(Group)
-        .filter(func.lower(Group.code).like(f"%{code.lower()}%"))
-        .first()
+        db.session.query(Group).filter(func.lower(Group.code).like(f"%{code.lower()}%")).first()
     )
     if not group:
-        return jsonify({"group_code": code, "date": target_date.isoformat(), "lessons": []})
+        if rng == "week":
+            dow = anchor_date.weekday()
+            monday = anchor_date - _td(days=dow)
+            days = [(monday + _td(days=i)).isoformat() for i in range(7)]
+            return jsonify({
+                "group_code": code, "range": "week",
+                "from": days[0], "to": days[-1],
+                "days": [{"date": d, "lessons": []} for d in days]
+            })
+        return jsonify({"group_code": code, "date": anchor_date.isoformat(), "lessons": []})
 
-    # Сетка слотов
+    # сетка слотов
     order_col = getattr(TimeSlot, "order_no", None) or getattr(TimeSlot, "order", None) or getattr(TimeSlot, "id")
     slots = db.session.query(TimeSlot).order_by(order_col.asc()).all()
 
-    # Занятия дня
+    # ---------- режим DAY ----------
+    if rng == "day":
+        rows = (
+            db.session.query(Lesson)
+            .options(
+                joinedload(Lesson.subject),
+                joinedload(Lesson.teacher),
+                joinedload(Lesson.room),
+                joinedload(Lesson.lesson_type),
+                joinedload(Lesson.time_slot),
+            )
+            .filter(
+                getattr(Lesson, "group_id") == getattr(group, "id"),
+                getattr(Lesson, "date") == anchor_date
+            )
+            .order_by(getattr(Lesson, "order_no").asc())
+            .all()
+        )
+
+        def _lesson_json(l):
+            ts_rel = getattr(l, "time_slot", None)
+            if ts_rel:
+                order_no = getattr(ts_rel, "order_no", getattr(ts_rel, "order", None))
+                start_hm = _to_hhmm(getattr(ts_rel, "start_time", getattr(ts_rel, "start", None)))
+                end_hm = _to_hhmm(getattr(ts_rel, "end_time", getattr(ts_rel, "end", None)))
+            else:
+                order_no = getattr(l, "order_no", None)
+                start_hm = _to_hhmm(getattr(l, "start_time", None))
+                end_hm = _to_hhmm(getattr(l, "end_time", None))
+
+            subj = getattr(l, "subject", None)
+            subj_name = getattr(subj, "name", "Дисциплина") if subj else "Дисциплина"
+
+            tch = getattr(l, "teacher", None)
+            teacher_full = "Преподаватель"
+            if tch:
+                teacher_full = getattr(tch, "full_name", None) or " ".join(
+                    [getattr(tch, "last_name", ""), getattr(tch, "first_name", ""), getattr(tch, "middle_name", "")]
+                ).strip() or "Преподаватель"
+
+            room = getattr(l, "room", None)
+            room_number = getattr(room, "number", None) if room else None
+
+            lt = getattr(l, "lesson_type", None)
+            type_name = getattr(lt, "name", "Занятие") if lt else "Занятие"
+
+            hw_text = None
+            if HAS_HOMEWORK:
+                hw_rel = getattr(l, "homework", None)
+                if hw_rel and getattr(hw_rel, "text", None):
+                    hw_text = hw_rel.text
+                else:
+                    hws = getattr(l, "homeworks", None)
+                    if hws and len(hws) > 0 and getattr(hws[0], "text", None):
+                        hw_text = hws[0].text
+
+            return {
+                "is_break": False,
+                "subject": {"name": subj_name},
+                "teacher": {"full_name": teacher_full},
+                "time_slot": {
+                    "order_no": order_no,
+                    "start_time": start_hm,
+                    "end_time": end_hm,
+                },
+                "room": {"number": room_number} if room_number else None,
+                "lesson_type": {"name": type_name},
+                "is_remote": bool(getattr(l, "is_remote", False)),
+                "homework": {"text": hw_text} if hw_text else None,
+            }
+
+        payload = [ _lesson_json(l) for l in rows ]
+        payload = insert_breaks(slots, payload)
+
+        return jsonify({
+            "group_code": getattr(group, "code", code),
+            "date": anchor_date.isoformat(),
+            "lessons": payload
+        })
+
+    # ---------- режим WEEK ----------
+    dow = anchor_date.weekday()  # 0=Mon
+    monday = anchor_date - _td(days=dow)
+    sunday = monday + _td(days=6)
+
     rows = (
         db.session.query(Lesson)
         .options(
@@ -212,14 +311,17 @@ def schedule_group(code: str):
         )
         .filter(
             getattr(Lesson, "group_id") == getattr(group, "id"),
-            getattr(Lesson, "date") == target_date
+            getattr(Lesson, "date") >= monday,
+            getattr(Lesson, "date") <= sunday,
         )
-        .order_by(getattr(Lesson, "order_no").asc())
+        .order_by(getattr(Lesson, "date").asc(), getattr(Lesson, "order_no").asc())
         .all()
     )
 
-    payload = []
-    for l in rows:
+    # сгруппируем по дате
+    by_date = { (monday + _td(days=i)): [] for i in range(7) }
+
+    def _lesson_json(l):
         ts_rel = getattr(l, "time_slot", None)
         if ts_rel:
             order_no = getattr(ts_rel, "order_no", getattr(ts_rel, "order", None))
@@ -256,7 +358,7 @@ def schedule_group(code: str):
                 if hws and len(hws) > 0 and getattr(hws[0], "text", None):
                     hw_text = hws[0].text
 
-        payload.append({
+        return {
             "is_break": False,
             "subject": {"name": subj_name},
             "teacher": {"full_name": teacher_full},
@@ -269,18 +371,25 @@ def schedule_group(code: str):
             "lesson_type": {"name": type_name},
             "is_remote": bool(getattr(l, "is_remote", False)),
             "homework": {"text": hw_text} if hw_text else None,
-        })
+        }
 
-    # Перерывы
-    from .services.schedule_utils import insert_breaks
-    payload = insert_breaks(slots, payload)
+    for l in rows:
+        d = getattr(l, "date")
+        by_date[d].append(_lesson_json(l))
+
+    days_payload = []
+    for i in range(7):
+        d = (monday + _td(days=i))
+        payload = insert_breaks(slots, list(by_date.get(d, [])))
+        days_payload.append({"date": d.isoformat(), "lessons": payload})
 
     return jsonify({
         "group_code": getattr(group, "code", code),
-        "date": target_date.isoformat(),
-        "lessons": payload
+        "range": "week",
+        "from": monday.isoformat(),
+        "to": sunday.isoformat(),
+        "days": days_payload
     })
-
 
 # ---------- /api/v1/schedule/teacher/<teacher_ref> ----------
 @bp.get("/schedule/teacher/<teacher_ref>")

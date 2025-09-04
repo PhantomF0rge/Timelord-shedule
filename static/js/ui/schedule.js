@@ -1,5 +1,5 @@
-import { $ } from "../utils/dom.js";
-import { statusForSlot } from "../utils/time.js";
+import { $, show } from "../utils/dom.js";
+import { statusForSlot, humanDayShort, humanDateCompact } from "../utils/time.js";
 
 function lessonView(l){
   if(l.is_break){
@@ -15,7 +15,7 @@ function lessonView(l){
   <article class="${cls.join(' ')}">
     <div class="title">${l.subject.name} <span class="meta">· ${l.lesson_type?.name||"Занятие"}</span></div>
     <div class="meta">
-      ${l.time_slot.start_time}–${l.time_slot.end_time} · №${l.time_slot.order_no}
+      ${l.time_slot.start_time}–${l.time_slot.end_time} · №${l.time_slot.order_no ?? ""}
       ${l.room ? " · ауд. " + l.room.number : " · СДО"}
       · ${l.teacher.full_name}
       ${l.homework ? " · ДЗ: " + l.homework.text : ""}
@@ -23,7 +23,7 @@ function lessonView(l){
   </article>`;
 }
 
-export function renderSchedule(payload){
+export function renderScheduleDay(payload){
   const root = $("#schedule-root");
   if(!root) return;
   if(!payload || !payload.lessons || !payload.lessons.length){
@@ -32,5 +32,31 @@ export function renderSchedule(payload){
     return;
   }
   root.dataset.state="filled";
+  root.classList.remove("week-grid");
   root.innerHTML = payload.lessons.map(lessonView).join("");
+}
+
+export function renderScheduleWeek(week){
+  // week = { days: [ {date:"YYYY-MM-DD", lessons:[...]}, ... ] }
+  const root = $("#schedule-root");
+  if(!root) return;
+  const days = (week?.days||[]);
+  root.dataset.state = days.length ? "filled":"empty";
+  if(!days.length){
+    root.classList.remove("week-grid");
+    root.innerHTML = `<div class="muted">Нет занятий на выбранную неделю.</div>`;
+    return;
+  }
+  root.classList.add("week-grid");
+  root.innerHTML = days.map(d=>{
+    const dateObj = new Date(d.date+'T00:00:00');
+    const hdr = `<div class="day-header">
+      <div class="day-title">${humanDayShort(dateObj)}</div>
+      <div class="day-date">${humanDateCompact(d.date)}</div>
+    </div>`;
+    const content = (d.lessons && d.lessons.length)
+      ? d.lessons.map(lessonView).join("")
+      : `<div class="muted">Нет занятий</div>`;
+    return `<div class="day-card">${hdr}${content}</div>`;
+  }).join("");
 }

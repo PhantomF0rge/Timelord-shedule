@@ -8,13 +8,24 @@
     </div>
   </section>
 
+  <section class="controls glass">
+    <div class="controls-row">
+      <label for="date-input" class="muted">Дата</label>
+      <input id="date-input" class="date-input" type="date" />
+      <div class="segmented" role="tablist" aria-label="Диапазон">
+        <button class="seg active" data-range="day" type="button" aria-selected="true">День</button>
+        <button class="seg" data-range="week" type="button" aria-selected="false">Неделя</button>
+      </div>
+    </div>
+  </section>
+
   <section class="legend">
     {% include "partials/legend.html" %}
   </section>
 
   <section class="schedule-shell">
     <div id="schedule-root" class="schedule-grid" data-state="empty">
-      <!-- JS отрисует сюда пары/перерывы -->
+      <!-- JS отрисует сюда пары/перерывы (день или неделю) -->
     </div>
   </section>
 {% endblock %}
