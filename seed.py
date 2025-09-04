@@ -25,6 +25,8 @@ def _safe_import(path, name):
 Group      = _safe_import("models.group", "Group")
 Teacher    = _safe_import("models.teacher", "Teacher")
 Subject    = _safe_import("models.subject", "Subject")
+Building   = _safe_import("models.building", "Building")
+RoomType   = _safe_import("models.room_type", "RoomType")
 Room       = _safe_import("models.room", "Room")
 LessonType = _safe_import("models.lesson_type", "LessonType")
 TimeSlot   = _safe_import("models.timeslot", "TimeSlot")
@@ -51,7 +53,7 @@ def set_if_has(obj, **kwargs):
             setattr(obj, k, v)
 
 def seed_base_dicts():
-    """Создаёт справочники: группы, преподаватели, предметы, аудитории, типы, слоты."""
+    """Создаёт справочники: группы, преподаватели, предметы, КОРПУСА, ТИПЫ АУДИТОРИЙ, аудитории, типы занятий, слоты."""
     ids = {}
 
     # --- Group ---
@@ -85,10 +87,55 @@ def seed_base_dicts():
         ids["subj_prog_id"] = getattr(s2, "id", None)
         ids["subj_hist_id"] = getattr(s3, "id", None)
 
-    # --- Rooms ---
+    # --- Buildings (корпуса) ---
+    if Building is not None:
+        b1 = Building(**build_kwargs(Building,
+                                     name="Главный корпус",
+                                     title="Главный корпус",
+                                     code="A",
+                                     address=""))
+        db.session.add(b1); db.session.flush()
+        ids["building_main_id"] = getattr(b1, "id", None)
+
+    # --- Room Types (типы аудиторий) ---
+    if RoomType is not None:
+        rt1 = RoomType(**build_kwargs(RoomType, name="lecture", title="Лекционная"))
+        rt2 = RoomType(**build_kwargs(RoomType, name="computer", title="Компьютерный класс"))
+        db.session.add_all([rt1, rt2]); db.session.flush()
+        ids["rt_lecture_id"] = getattr(rt1, "id", None)
+        ids["rt_computer_id"] = getattr(rt2, "id", None)
+
+    # --- Rooms (аудитории) ---
     if Room is not None:
-        r1 = Room(**build_kwargs(Room, number="101", capacity=40, computers=0, room_type="lecture"))
-        r2 = Room(**build_kwargs(Room, number="Лаб-3", capacity=25, computers=25, room_type="computer"))
+        # аудитория 101 (лекционная)
+        r1_kwargs = build_kwargs(
+            Room,
+            number="101",
+            capacity=40,
+            computers_count=0,
+            computers=0
+        )
+        # выставляем FK, только если такие поля есть в модели
+        if has_attr(Room, "building_id"):
+            r1_kwargs["building_id"] = ids.get("building_main_id")
+        if has_attr(Room, "room_type_id"):
+            r1_kwargs["room_type_id"] = ids.get("rt_lecture_id")
+        r1 = Room(**r1_kwargs)
+
+        # лаборатория (компьютерный класс)
+        r2_kwargs = build_kwargs(
+            Room,
+            number="Лаб-3",
+            capacity=25,
+            computers_count=25,
+            computers=25
+        )
+        if has_attr(Room, "building_id"):
+            r2_kwargs["building_id"] = ids.get("building_main_id")
+        if has_attr(Room, "room_type_id"):
+            r2_kwargs["room_type_id"] = ids.get("rt_computer_id")
+        r2 = Room(**r2_kwargs)
+
         db.session.add_all([r1, r2]); db.session.flush()
         ids["room_101_id"] = getattr(r1, "id", None)
         ids["room_lab3_id"] = getattr(r2, "id", None)
@@ -109,7 +156,6 @@ def seed_base_dicts():
         ts2 = TimeSlot(**build_kwargs(TimeSlot, order_no=2, order=2, start_time=time(10,20), end_time=time(11,50)))
         ts3 = TimeSlot(**build_kwargs(TimeSlot, order_no=3, order=3, start_time=time(12,10), end_time=time(13,40)))
         db.session.add_all([ts1, ts2, ts3]); db.session.flush()
-        # сохраняем id/порядки
         ids["slot1_id"] = getattr(ts1, "id", None); ids["slot1_ord"] = getattr(ts1, "order_no", getattr(ts1, "order", 1))
         ids["slot2_id"] = getattr(ts2, "id", None); ids["slot2_ord"] = getattr(ts2, "order_no", getattr(ts2, "order", 2))
         ids["slot3_id"] = getattr(ts3, "id", None); ids["slot3_ord"] = getattr(ts3, "order_no", getattr(ts3, "order", 3))
