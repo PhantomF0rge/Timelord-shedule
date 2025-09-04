@@ -23,9 +23,18 @@ def create_app(config_class=Config):
     app = Flask(__name__, static_folder="static", template_folder="templates")
     app.config.from_object(config_class)
 
+    # init extensions
     db.init_app(app)
     migrate.init_app(app, db)
     login_manager.init_app(app)
+
+    # >>> ВАЖНО: пробрасываем питоновские функции в Jinja <<<
+    # теперь в шаблонах можно вызывать hasattr(...), getattr(...), isinstance(...)
+    app.jinja_env.globals.update(
+        hasattr=hasattr,
+        getattr=getattr,
+        isinstance=isinstance
+    )
 
     # Register blueprints
     app.register_blueprint(core_bp)
