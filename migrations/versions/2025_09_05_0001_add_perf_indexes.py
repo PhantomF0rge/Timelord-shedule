@@ -1,7 +1,6 @@
 """add performance indexes (conditional, safe for sqlite)"""
 
 from alembic import op
-import sqlalchemy as sa
 from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
@@ -53,7 +52,7 @@ def upgrade():
             created = True
             break
     if not created:
-        # на крайний — попробуем field "order"
+        # на крайний — попробуем поле "order"
         for t in ("timeslot", "time_slot", "timeslots", "time_slots"):
             if _create_index_if_absent(bind, f"ix_{t}_order", t, ["order"]):
                 break
@@ -72,7 +71,6 @@ def upgrade():
 
 def downgrade():
     bind = op.get_bind()
-    # Безопасно: просто дропаем все потенциальные имена индексов
     possible = [
         "uq_groups_code", "uq_group_code",
         "ix_teachers_full_name", "ix_teachers_last_name", "ix_teachers_first_name", "ix_teachers_middle_name",
@@ -85,6 +83,6 @@ def downgrade():
     ]
     for idx in possible:
         try:
-            bind.execute(text(f'DROP INDEX IF EXISTS {idx}'))
+            bind.execute(text(f"DROP INDEX IF EXISTS {idx}"))
         except Exception:
             pass

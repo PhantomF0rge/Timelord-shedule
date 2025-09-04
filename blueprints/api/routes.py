@@ -1,264 +1,207 @@
-from flask import request, jsonify
-from sqlalchemy import func, or_
-from sqlalchemy.exc import OperationalError, ProgrammingError, DatabaseError
+from flask import jsonify, request
+from sqlalchemy import func
+from sqlalchemy.orm import joinedload
+from datetime import date as _date, datetime as _dt, timedelta as _td
+
 from . import bp
 from extensions import db
 
-# Пытаемся импортировать реальные модели; если их нет/другие имена — оставим None.
-try:
-    from models.group import Group
-except Exception:
-    Group = None
 
-try:
-    from models.teacher import Teacher
-except Exception:
-    Teacher = None
-
-try:
-    from models.subject import Subject
-except Exception:
-    Subject = None
-
-
-def _like(field, q: str):
-    """Кросс-СУБД CASE-INSENSITIVE like."""
-    return func.lower(field).like(f"%{q.lower()}%")
-
-def _collect_group(q: str, limit: int):
-    items = []
-    if not Group:
-        return items
-    code_col = getattr(Group, "code", None)
-    name_col = getattr(Group, "name", None)
-    label_col = getattr(Group, "label", None)
-
-    filters = []
-    if code_col is not None:
-        filters.append(_like(code_col, q))
-    if name_col is not None:
-        filters.append(_like(name_col, q))
-    if label_col is not None:
-        filters.append(_like(label_col, q))
-    if not filters:
-        return items
-
+# ---------- утилиты ----------
+def _to_hhmm(v):
+    if v is None:
+        return None
+    if isinstance(v, str):
+        return v[:5]
     try:
-        query = (
-            db.session.query(Group)
-            .filter(or_(*filters))
-            .order_by(*(c.asc() for c in [code_col or name_col] if c is not None))
-            .limit(limit)
-        )
-        rows = query.all()
-    except (OperationalError, ProgrammingError, DatabaseError):
-        # БД/таблиц ещё нет — вернём пусто, чтобы не падал фронт
-        return []
+        return v.strftime("%H:%M")
+    except Exception:
+        return str(v)[:5]
 
-    for g in rows:
-        code = getattr(g, "code", None)
-        name = getattr(g, "name", None)
-        label = getattr(g, "label", None)
-        items.append({
-            "type": "group",
-            "id": getattr(g, "id", None),
-            "label": name or label or code or "Группа",
-            "code": code or (name or label),
-        })
-    return items
 
-def _teacher_fullname(t) -> str:
-    fn = getattr(t, "full_name", None)
-    if fn:
-        return fn
-    parts = [getattr(t, n, "") for n in ("last_name", "first_name", "middle_name")]
-    return " ".join(p for p in parts if p).strip() or "Преподаватель"
-
-def _collect_teacher(q: str, limit: int):
-    items = []
-    if not Teacher:
-        return items
-    fields = []
-    for attr in ("full_name", "last_name", "first_name", "middle_name"):
-        col = getattr(Teacher, attr, None)
-        if col is not None:
-            fields.append(col)
-    if not fields:
-        return items
-    filters = [_like(col, q) for col in fields]
+def _to_minutes(v):
+    # принимает datetime.time или строку "HH:MM"
+    if v is None:
+        return None
     try:
-        query = db.session.query(Teacher).filter(or_(*filters)).limit(limit)
-        rows = query.all()
-    except (OperationalError, ProgrammingError, DatabaseError):
-        return []
-    for t in rows:
-        items.append({
-            "type": "teacher",
-            "id": getattr(t, "id", None),
-            "label": _teacher_fullname(t)
-        })
-    return items
+        if isinstance(v, str):
+            h, m = v[:5].split(":")
+            return int(h) * 60 + int(m)
+        return v.hour * 60 + v.minute
+    except Exception:
+        return None
 
-def _collect_subject(q: str, limit: int):
-    items = []
-    if not Subject:
-        return items
-    name_col = getattr(Subject, "name", None)
-    title_col = getattr(Subject, "title", None)
-    field = name_col or title_col
-    if field is None:
-        return items
+
+def _try_import(module_path, class_name):
     try:
-        query = db.session.query(Subject).filter(_like(field, q)).limit(limit)
-        rows = query.all()
-    except (OperationalError, ProgrammingError, DatabaseError):
-        return []
-    for s in rows:
-        items.append({
-            "type": "subject",
-            "id": getattr(s, "id", None),
-            "label": getattr(s, "name", None) or getattr(s, "title", None) or "Дисциплина"
-        })
-    return items
+        mod = __import__(module_path, fromlist=[class_name])
+        return getattr(mod, class_name, None)
+    except Exception:
+        return None
 
-# ---------- SUGGEST (из БД с fallback'ом) ----------
 
+def _models():
+    """
+    Ленивая загрузка моделей. Возвращает dict с тем, что удалось импортировать.
+    Ничего не выбрасывает — обработчики сами решают, что делать, если чего-то нет.
+    """
+    return {
+        "Group": _try_import("models.group", "Group")
+                 or _try_import("models.groups", "Group"),
+
+        "TimeSlot": _try_import("models.timeslot", "TimeSlot")
+                    or _try_import("models.time_slot", "TimeSlot")
+                    or _try_import("models.time_slots", "TimeSlot")
+                    or _try_import("models.slot", "TimeSlot"),
+
+        "Lesson": _try_import("models.lesson", "Lesson")
+                  or _try_import("models.lessons", "Lesson"),
+
+        "Subject": _try_import("models.subject", "Subject")
+                   or _try_import("models.subjects", "Subject"),
+
+        "Teacher": _try_import("models.teacher", "Teacher")
+                   or _try_import("models.teachers", "Teacher"),
+
+        "Room": _try_import("models.room", "Room")
+                or _try_import("models.rooms", "Room"),
+
+        "LessonType": _try_import("models.lesson_type", "LessonType")
+                      or _try_import("models.lesson_types", "LessonType")
+                      or _try_import("models.type", "LessonType"),
+
+        "Homework": _try_import("models.homework", "Homework")
+                    or _try_import("models.homeworks", "Homework"),
+    }
+
+
+# ---------- /api/v1/suggest ----------
 @bp.get("/suggest")
 def suggest():
     """
-    GET /api/v1/suggest?q=&type=group|teacher|subject&limit=10
-    Ищет по БД. Если таблиц ещё нет — не падаем, возвращаем пустой список или моки.
+    GET /api/v1/suggest?q=&limit=
+    Возвращает подсказки из групп/преподавателей/дисциплин.
+    Формат items: {id, type, label, code?}
     """
+    M = _models()
+    Group = M["Group"]
+    Teacher = M["Teacher"]
+    Subject = M["Subject"]
+
     q = (request.args.get("q") or "").strip()
     limit = int(request.args.get("limit") or 10)
-    only_type = (request.args.get("type") or "").strip().lower()
+    items = []
 
     if not q:
         return jsonify({"items": []})
 
-    try:
-        items = []
-        if not only_type or only_type == "group":
-            items += _collect_group(q, limit)
-        if (not only_type or only_type == "teacher") and len(items) < limit:
-            items += _collect_teacher(q, limit - len(items))
-        if (not only_type or only_type == "subject") and len(items) < limit:
-            items += _collect_subject(q, limit - len(items))
-        return jsonify({"items": items[:limit]})
-    except Exception:
-        # запасной план — небольшие моки для UX
-        mocks = [
-            {"type":"group","id":1,"label":"ПИ-101","code":"PI-101"},
-            {"type":"group","id":2,"label":"ИС-202","code":"IS-202"},
-            {"type":"teacher","id":101,"label":"Иванов И.И."},
-            {"type":"subject","id":201,"label":"Программирование"},
-        ]
-        ql = q.lower()
-        filtered = [m for m in mocks if ql in m["label"].lower() or ql in m.get("code","").lower()]
-        return jsonify({"items": filtered[:limit]})
+    # Если какой-то модели нет — просто пропускаем соответствующий раздел.
+    if Group is not None:
+        groups = (
+            db.session.query(Group)
+            .filter(
+                (func.lower(Group.code).like(f"%{q.lower()}%")) |
+                (func.lower(Group.name).like(f"%{q.lower()}%"))
+            )
+            .order_by(Group.code.asc())
+            .limit(limit)
+            .all()
+        )
+        for g in groups:
+            items.append({
+                "id": g.id,
+                "type": "group",
+                "label": f"{getattr(g, 'code', '')} — {getattr(g, 'name', '')}".strip(" —"),
+                "code": getattr(g, "code", None)
+            })
+
+    if Teacher is not None:
+        teachers = (
+            db.session.query(Teacher)
+            .filter(func.lower(Teacher.full_name).like(f"%{q.lower()}%"))
+            .order_by(Teacher.full_name.asc())
+            .limit(limit)
+            .all()
+        )
+        for t in teachers:
+            items.append({
+                "id": t.id,
+                "type": "teacher",
+                "label": getattr(t, "full_name", "Преподаватель")
+            })
+
+    if Subject is not None:
+        subjs = (
+            db.session.query(Subject)
+            .filter(func.lower(Subject.name).like(f"%{q.lower()}%"))
+            .order_by(Subject.name.asc())
+            .limit(limit)
+            .all()
+        )
+        for s in subjs:
+            items.append({
+                "id": s.id,
+                "type": "subject",
+                "label": getattr(s, "name", "Дисциплина")
+            })
+
+    return jsonify({"items": items})
 
 
-# ---------- SCHEDULE (пока прежний мок — заменим следующим шагом) ----------
-
+# ---------- /api/v1/schedule/group/<code> ----------
 @bp.get("/schedule/group/<code>")
 def schedule_group(code: str):
     """
     GET /api/v1/schedule/group/<code>?date=YYYY-MM-DD&range=day|week
     Возвращает занятия на день с автоматической вставкой «перерывов» по полной сетке TimeSlot.
     """
-    from datetime import date as _date, datetime as _dt
-    from sqlalchemy.orm import joinedload
-    from sqlalchemy import func
-    from .services.schedule_utils import insert_breaks, normalize_slot
-    from extensions import db
+    from .services.schedule_utils import insert_breaks
 
-# Универсальный импорт модели по нескольким возможным путям
-def _import_model(candidates):
-    for module_path, class_name in candidates:
+    M = _models()
+    Group = M["Group"]
+    TimeSlot = M["TimeSlot"]
+    Lesson = M["Lesson"]
+    Subject = M["Subject"]
+    Teacher = M["Teacher"]
+    Room = M["Room"]
+    LessonType = M["LessonType"]
+    Homework = M["Homework"]
+    HAS_HOMEWORK = Homework is not None
+
+    if not all([Group, TimeSlot, Lesson]):
+        # Критичных моделей нет — отдаём пустой ответ, чтобы не падать.
+        date_str = (request.args.get("date") or "").strip()
         try:
-            mod = __import__(module_path, fromlist=[class_name])
-            return getattr(mod, class_name)
+            target_date = _dt.strptime(date_str, "%Y-%m-%d").date() if date_str else _date.today()
         except Exception:
-            continue
-    raise ImportError(f"Cannot import any of: {candidates}")
+            target_date = _date.today()
+        return jsonify({"group_code": code, "date": target_date.isoformat(), "lessons": []})
 
-	Group = _import_model([
-	    ("models.group", "Group"),
-	    ("models.groups", "Group"),
-	])
-
-	TimeSlot = _import_model([
-	    ("models.timeslot", "TimeSlot"),
-	    ("models.time_slot", "TimeSlot"),
-	    ("models.time_slots", "TimeSlot"),
-	    ("models.slot", "TimeSlot"),
-	])
-
-	Lesson = _import_model([
-	    ("models.lesson", "Lesson"),
-	    ("models.lessons", "Lesson"),
-	])
-
-	Subject = _import_model([
-	    ("models.subject", "Subject"),
-	    ("models.subjects", "Subject"),
-	])
-
-	Teacher = _import_model([
-	    ("models.teacher", "Teacher"),
-	    ("models.teachers", "Teacher"),
-	])
-
-	Room = _import_model([
-	    ("models.room", "Room"),
-	    ("models.rooms", "Room"),
-	])
-
-	LessonType = _import_model([
-	    ("models.lesson_type", "LessonType"),
-	    ("models.lesson_types", "LessonType"),
-	    ("models.type", "LessonType"),
-	])
-
-	# домашка может отсутствовать — мягко
-	try:
-	    Homework = _import_model([
-	        ("models.homework", "Homework"),
-	        ("models.homeworks", "Homework"),
-	    ])
-	    HAS_HOMEWORK = True
-	except Exception:
-	    HAS_HOMEWORK = False
-
-    # --- параметры ---
     date_str = (request.args.get("date") or "").strip()
     try:
         target_date = _dt.strptime(date_str, "%Y-%m-%d").date() if date_str else _date.today()
     except Exception:
         target_date = _date.today()
 
-    # --- находим группу по коду (без регистра) ---
+    # Группа
     group = (
         db.session.query(Group)
         .filter(func.lower(Group.code) == code.lower())
         .first()
+    ) or (
+        db.session.query(Group)
+        .filter(func.lower(Group.code).like(f"%{code.lower()}%"))
+        .first()
     )
-    if not group:
-        # частичное совпадение (на всякий случай)
-        group = (
-            db.session.query(Group)
-            .filter(func.lower(Group.code).like(f"%{code.lower()}%"))
-            .first()
-        )
     if not group:
         return jsonify({"group_code": code, "date": target_date.isoformat(), "lessons": []})
 
-    # --- сетка слотов ---
-    slots = db.session.query(TimeSlot).order_by(TimeSlot.order_no.asc()).all()
+    # Сетка слотов
+    order_col = getattr(TimeSlot, "order_no", None) or getattr(TimeSlot, "order", None) or getattr(TimeSlot, "id")
+    slots = db.session.query(TimeSlot).order_by(order_col.asc()).all()
 
-    # --- занятия на день текущей группы ---
-    # делаем prefetch связей, чтобы избежать N+1
-    q = (
+    # Занятия дня
+    rows = (
         db.session.query(Lesson)
         .options(
             joinedload(Lesson.subject),
@@ -268,68 +211,47 @@ def _import_model(candidates):
             joinedload(Lesson.time_slot),
         )
         .filter(
-            Lesson.group_id == group.id,
-            Lesson.date == target_date
+            getattr(Lesson, "group_id") == getattr(group, "id"),
+            getattr(Lesson, "date") == target_date
         )
-        .order_by(
-            Lesson.order_no.asc()
-        )
+        .order_by(getattr(Lesson, "order_no").asc())
+        .all()
     )
-    rows = q.all()
-
-    # --- сбор JSON ---
-    def _to_hhmm(v):
-        if v is None:
-            return None
-        if isinstance(v, str):
-            return v[:5]
-        try:
-            return v.strftime("%H:%M")
-        except Exception:
-            return str(v)[:5]
 
     payload = []
     for l in rows:
-        # timeslot
-        if l.time_slot:
-            ts = {
-                "order_no": l.time_slot.order_no,
-                "start_time": _to_hhmm(l.time_slot.start_time),
-                "end_time": _to_hhmm(l.time_slot.end_time),
-            }
+        ts_rel = getattr(l, "time_slot", None)
+        if ts_rel:
+            order_no = getattr(ts_rel, "order_no", getattr(ts_rel, "order", None))
+            start_hm = _to_hhmm(getattr(ts_rel, "start_time", getattr(ts_rel, "start", None)))
+            end_hm = _to_hhmm(getattr(ts_rel, "end_time", getattr(ts_rel, "end", None)))
         else:
-            ts = {
-                "order_no": l.order_no,
-                "start_time": _to_hhmm(getattr(l, "start_time", None)),
-                "end_time": _to_hhmm(getattr(l, "end_time", None)),
-            }
+            order_no = getattr(l, "order_no", None)
+            start_hm = _to_hhmm(getattr(l, "start_time", None))
+            end_hm = _to_hhmm(getattr(l, "end_time", None))
 
-        # subject
-        subj_name = l.subject.name if l.subject else "Дисциплина"
+        subj = getattr(l, "subject", None)
+        subj_name = getattr(subj, "name", "Дисциплина") if subj else "Дисциплина"
 
-        # teacher
-        if l.teacher and getattr(l.teacher, "full_name", None):
-            teacher_full = l.teacher.full_name
-        elif l.teacher:
-            parts = [getattr(l.teacher, "last_name", ""), getattr(l.teacher, "first_name", ""), getattr(l.teacher, "middle_name", "")]
-            teacher_full = " ".join([p for p in parts if p]).strip() or "Преподаватель"
-        else:
-            teacher_full = "Преподаватель"
+        tch = getattr(l, "teacher", None)
+        teacher_full = "Преподаватель"
+        if tch:
+            teacher_full = getattr(tch, "full_name", None) or " ".join(
+                [getattr(tch, "last_name", ""), getattr(tch, "first_name", ""), getattr(tch, "middle_name", "")]
+            ).strip() or "Преподаватель"
 
-        # room
-        room_number = l.room.number if l.room else None
+        room = getattr(l, "room", None)
+        room_number = getattr(room, "number", None) if room else None
 
-        # type
-        type_name = l.lesson_type.name if l.lesson_type else "Занятие"
+        lt = getattr(l, "lesson_type", None)
+        type_name = getattr(lt, "name", "Занятие") if lt else "Занятие"
 
-        # homework (если есть отношение l.homework или l.homeworks[0])
         hw_text = None
         if HAS_HOMEWORK:
             hw_rel = getattr(l, "homework", None)
             if hw_rel and getattr(hw_rel, "text", None):
                 hw_text = hw_rel.text
             else:
-                # если связь списочная (homeworks)
                 hws = getattr(l, "homeworks", None)
                 if hws and len(hws) > 0 and getattr(hws[0], "text", None):
                     hw_text = hws[0].text
@@ -338,21 +260,29 @@ def _import_model(candidates):
             "is_break": False,
             "subject": {"name": subj_name},
             "teacher": {"full_name": teacher_full},
-            "time_slot": ts,
+            "time_slot": {
+                "order_no": order_no,
+                "start_time": start_hm,
+                "end_time": end_hm,
+            },
             "room": {"number": room_number} if room_number else None,
             "lesson_type": {"name": type_name},
             "is_remote": bool(getattr(l, "is_remote", False)),
             "homework": {"text": hw_text} if hw_text else None,
         })
 
-    # --- вставляем «перерывы» и возвращаем ---
+    # Перерывы
+    from .services.schedule_utils import insert_breaks
     payload = insert_breaks(slots, payload)
+
     return jsonify({
-        "group_code": group.code,
+        "group_code": getattr(group, "code", code),
         "date": target_date.isoformat(),
         "lessons": payload
     })
 
+
+# ---------- /api/v1/schedule/teacher/<teacher_ref> ----------
 @bp.get("/schedule/teacher/<teacher_ref>")
 def schedule_teacher(teacher_ref: str):
     """
@@ -360,27 +290,29 @@ def schedule_teacher(teacher_ref: str):
     teacher_ref: числовой id ИЛИ строка (поиск по full_name, case-insensitive, частичное совпадение).
     Ответ: список занятий + агрегаты (total_days, total_lessons, total_hours).
     """
-    from datetime import date as _date, datetime as _dt, timedelta as _td
-    from sqlalchemy.orm import joinedload
-    from sqlalchemy import func, and_
-    from extensions import db
+    M = _models()
+    TimeSlot = M["TimeSlot"]
+    Lesson = M["Lesson"]
+    Teacher = M["Teacher"]
+    Homework = M["Homework"]
+    HAS_HOMEWORK = Homework is not None
 
-    # импорт моделей
-    from models.lesson import Lesson
-    from models.teacher import Teacher
-    from models.subject import Subject
-    from models.room import Room
-    from models.lesson_type import LessonType
-    from models.timeslot import TimeSlot
-    try:
-        from models.homework import Homework  # noqa: F401
-        HAS_HOMEWORK = True
-    except Exception:
-        HAS_HOMEWORK = False
+    if not all([TimeSlot, Lesson, Teacher]):
+        # нет критичных моделей — отдадим пустой ответ
+        today = _date.today()
+        dow = today.weekday()
+        date_from = today - _td(days=dow)
+        date_to = date_from + _td(days=6)
+        return jsonify({
+            "teacher": teacher_ref,
+            "from": date_from.isoformat(),
+            "to": date_to.isoformat(),
+            "lessons": [],
+            "stats": {"total_days": 0, "total_lessons": 0, "total_hours": 0.0}
+        })
 
-    # --- период ---
     from_str = (request.args.get("from") or "").strip()
-    to_str   = (request.args.get("to") or "").strip()
+    to_str = (request.args.get("to") or "").strip()
     today = _date.today()
 
     def _parse(d):
@@ -390,20 +322,17 @@ def schedule_teacher(teacher_ref: str):
             return None
 
     date_from = _parse(from_str)
-    date_to   = _parse(to_str)
-
+    date_to = _parse(to_str)
     if not date_from or not date_to or date_from > date_to:
-        # период по умолчанию: текущая неделя (понедельник—воскресенье)
         dow = today.weekday()  # 0=Mon
         date_from = today - _td(days=dow)
-        date_to   = date_from + _td(days=6)
+        date_to = date_from + _td(days=6)
 
-    # --- найти преподавателя ---
+    # найти преподавателя
     teacher = None
     if teacher_ref.isdigit():
         teacher = db.session.get(Teacher, int(teacher_ref))
     if not teacher:
-        # поиск по ФИО (full_name) — полное или частичное совпадение
         teacher = (
             db.session.query(Teacher)
             .filter(func.lower(Teacher.full_name) == teacher_ref.lower())
@@ -422,37 +351,18 @@ def schedule_teacher(teacher_ref: str):
             "stats": {"total_days": 0, "total_lessons": 0, "total_hours": 0.0}
         })
 
-    # --- сетка слотов (для длительности, если нет start/end у Lesson) ---
-    slots = db.session.query(TimeSlot).order_by(TimeSlot.order_no.asc()).all()
-
-    def _to_hhmm(v):
-        if v is None: return None
-        if isinstance(v, str): return v[:5]
-        try: return v.strftime("%H:%M")
-        except Exception: return str(v)[:5]
-
-    def _to_minutes(v):
-        # принимает datetime.time или "HH:MM"
-        if v is None: return None
-        try:
-            if isinstance(v, str):
-                h, m = v[:5].split(":")
-                return int(h)*60 + int(m)
-            return v.hour*60 + v.minute
-        except Exception:
-            return None
-
-    # карта слотов: ord -> (from_min, to_min)
+    # сетка слотов -> для длительности
+    order_col = getattr(TimeSlot, "order_no", None) or getattr(TimeSlot, "order", None) or getattr(TimeSlot, "id")
+    slots = db.session.query(TimeSlot).order_by(order_col.asc()).all()
     slots_map = {}
     for s in slots:
-        start = _to_minutes(getattr(s, "start_time", None) or getattr(s, "start", None))
-        end   = _to_minutes(getattr(s, "end_time", None) or getattr(s, "end", None))
-        ord_no = getattr(s, "order_no", None) or getattr(s, "order", None) or getattr(s, "id", None)
+        start = _to_minutes(getattr(s, "start_time", getattr(s, "start", None)))
+        end = _to_minutes(getattr(s, "end_time", getattr(s, "end", None)))
+        ord_no = getattr(s, "order_no", getattr(s, "order", getattr(s, "id", None)))
         if ord_no is not None and start is not None and end is not None:
             slots_map[int(ord_no)] = (start, end)
 
-    # --- выборка занятий ---
-    q = (
+    rows = (
         db.session.query(Lesson)
         .options(
             joinedload(Lesson.subject),
@@ -462,53 +372,54 @@ def schedule_teacher(teacher_ref: str):
             joinedload(Lesson.time_slot),
         )
         .filter(
-            Lesson.teacher_id == teacher.id,
-            Lesson.date >= date_from,
-            Lesson.date <= date_to,
+            getattr(Lesson, "teacher_id") == getattr(teacher, "id"),
+            getattr(Lesson, "date") >= date_from,
+            getattr(Lesson, "date") <= date_to,
         )
-        .order_by(Lesson.date.asc(), Lesson.order_no.asc())
+        .order_by(getattr(Lesson, "date").asc(), getattr(Lesson, "order_no").asc())
+        .all()
     )
-    rows = q.all()
 
     lessons = []
     total_minutes = 0
     days_with_lessons = set()
 
     for l in rows:
-        ts = l.time_slot
-        # вычисляем время занятия
-        if ts:
-            start_hm = _to_hhmm(ts.start_time)
-            end_hm   = _to_hhmm(ts.end_time)
-            order_no = ts.order_no
+        ts_rel = getattr(l, "time_slot", None)
+        if ts_rel:
+            start_hm = _to_hhmm(getattr(ts_rel, "start_time", getattr(ts_rel, "start", None)))
+            end_hm = _to_hhmm(getattr(ts_rel, "end_time", getattr(ts_rel, "end", None)))
+            order_no = getattr(ts_rel, "order_no", getattr(ts_rel, "order", None))
         else:
             start_hm = _to_hhmm(getattr(l, "start_time", None))
-            end_hm   = _to_hhmm(getattr(l, "end_time", None))
+            end_hm = _to_hhmm(getattr(l, "end_time", None))
             order_no = getattr(l, "order_no", None)
 
-        # длительность (мин): сперва по уроку, потом по слоту
         s_min = _to_minutes(start_hm)
         e_min = _to_minutes(end_hm)
         if (s_min is None or e_min is None) and isinstance(order_no, int) and order_no in slots_map:
             s_min, e_min = slots_map[order_no]
-            start_hm = start_hm or f"{s_min//60:02d}:{s_min%60:02d}"
-            end_hm   = end_hm   or f"{e_min//60:02d}:{e_min%60:02d}"
+            start_hm = start_hm or f"{s_min // 60:02d}:{s_min % 60:02d}"
+            end_hm = end_hm or f"{e_min // 60:02d}:{e_min % 60:02d}"
 
         dur = (e_min - s_min) if (s_min is not None and e_min is not None and e_min >= s_min) else 0
         total_minutes += dur
 
-        # сбор полей
-        subj_name = l.subject.name if l.subject else "Дисциплина"
-        if l.teacher and getattr(l.teacher, "full_name", None):
-            teacher_full = l.teacher.full_name
-        elif l.teacher:
-            parts = [getattr(l.teacher, "last_name", ""), getattr(l.teacher, "first_name", ""), getattr(l.teacher, "middle_name", "")]
-            teacher_full = " ".join([p for p in parts if p]).strip() or "Преподаватель"
-        else:
-            teacher_full = "Преподаватель"
+        subj = getattr(l, "subject", None)
+        subj_name = getattr(subj, "name", "Дисциплина") if subj else "Дисциплина"
 
-        room_number = l.room.number if l.room else None
-        type_name = l.lesson_type.name if l.lesson_type else "Занятие"
+        tch = getattr(l, "teacher", None)
+        teacher_full = "Преподаватель"
+        if tch:
+            teacher_full = getattr(tch, "full_name", None) or " ".join(
+                [getattr(tch, "last_name", ""), getattr(tch, "first_name", ""), getattr(tch, "middle_name", "")]
+            ).strip() or "Преподаватель"
+
+        room = getattr(l, "room", None)
+        room_number = getattr(room, "number", None) if room else None
+
+        lt = getattr(l, "lesson_type", None)
+        type_name = getattr(lt, "name", "Занятие") if lt else "Занятие"
 
         hw_text = None
         if HAS_HOMEWORK:
@@ -520,9 +431,9 @@ def schedule_teacher(teacher_ref: str):
                 if hws and len(hws) and getattr(hws[0], "text", None):
                     hw_text = hws[0].text
 
-        days_with_lessons.add(l.date)
+        days_with_lessons.add(getattr(l, "date"))
         lessons.append({
-            "date": l.date.isoformat(),
+            "date": getattr(l, "date").isoformat(),
             "is_break": False,
             "subject": {"name": subj_name},
             "teacher": {"full_name": teacher_full},
@@ -545,7 +456,7 @@ def schedule_teacher(teacher_ref: str):
 
     return jsonify({
         "teacher": getattr(teacher, "full_name", teacher_ref),
-        "teacher_id": teacher.id,
+        "teacher_id": getattr(teacher, "id"),
         "from": date_from.isoformat(),
         "to": date_to.isoformat(),
         "lessons": lessons,
