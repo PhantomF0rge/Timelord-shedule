@@ -4,8 +4,8 @@
   <div style="display:flex;justify-content:space-between;align-items:center">
     <h2 style="margin:0">Группы</h2>
     <div>
-      <a class="btn" href="{{ url_for('admin.group_create') }}">+ Новая группа</a>
-      <a class="btn ghost" href="{{ url_for('admin.dashboard') }}">Назад</a>
+      <a class="btn" href="{{ url_for('admin.groups_form') }}">+ Новая группа</a>
+      <a class="btn ghost" href="{{ url_for('admin.index') }}">Назад</a>
     </div>
   </div>
   <div style="overflow:auto;margin-top:12px">
@@ -30,7 +30,7 @@
             {{ 'СПО' if edu in ['SPO','СПО'] else ('ВО' if edu in ['VO','ВО'] else '—') }}
           </td>
           <td style="padding:8px;border-bottom:1px solid var(--panel-border)">
-            <a class="btn" href="{{ url_for('admin.group_edit', gid=g.id) }}">Изменить</a>
+            <a class="btn" href="{{ url_for('admin.groups_form', gid=g.id) }}">Изменить</a>
           </td>
         </tr>
         {% else %}

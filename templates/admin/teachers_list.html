@@ -1,0 +1,43 @@
+{% extends "layout.html" %}
+{% block content %}
+<section class="glass" style="padding:16px">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+    <h2 style="margin:0">Преподаватели</h2>
+    <a class="btn" href="{{ url_for('admin.teachers_form') }}">Добавить</a>
+  </div>
+  <div style="margin-top:12px;overflow:auto">
+    <table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr>
+          <th style="text-align:left;padding:8px;border-bottom:1px solid var(--panel-border)">ID</th>
+          <th style="text-align:left;padding:8px;border-bottom:1px solid var(--panel-border)">ФИО</th>
+          <th style="text-align:left;padding:8px;border-bottom:1px solid var(--panel-border)">Нагрузка/нед</th>
+          <th style="padding:8px;border-bottom:1px solid var(--panel-border)"></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for t in items %}
+        <tr>
+          <td style="padding:8px">{{ t.id }}</td>
+          <td style="padding:8px">
+            {% if hasattr(t,'full_name') and t.full_name %}{{ t.full_name }}
+            {% else %}
+              {{ getattr(t,'last_name','') }} {{ getattr(t,'first_name','') }} {{ getattr(t,'middle_name','') }}
+            {% endif %}
+          </td>
+          <td style="padding:8px">{{ getattr(t,'weekly_hours_limit','—') }}</td>
+          <td style="padding:8px;text-align:right;white-space:nowrap">
+            <a class="btn" href="{{ url_for('admin.teachers_form', item_id=t.id) }}">Изм.</a>
+            <form method="post" action="{{ url_for('admin.teachers_delete', item_id=t.id) }}" style="display:inline" onsubmit="return confirm('Удалить?')">
+              <button class="btn" type="submit">Удалить</button>
+            </form>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="muted" style="padding:8px">Нет данных</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

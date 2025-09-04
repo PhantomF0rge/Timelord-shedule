@@ -1,0 +1,13 @@
+{% extends "layout.html" %}
+{% block content %}
+<section class="glass" style="padding:16px">
+  <h2 class="h1" style="margin:0 0 10px">Администрирование</h2>
+  <p class="muted">Быстрые ссылки:</p>
+  <ul>
+    <li><a href="{{ url_for('admin.groups_list') }}">Группы</a></li>
+    <li><a href="{{ url_for('admin.teachers_list') }}">Преподаватели</a></li>
+    <li><a href="{{ url_for('admin.subjects_list') }}">Дисциплины</a></li>
+    <li><a href="{{ url_for('admin.rooms_list') }}">Аудитории</a></li>
+  </ul>
+</section>
+{% endblock %}
