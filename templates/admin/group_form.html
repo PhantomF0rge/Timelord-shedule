@@ -1,0 +1,26 @@
+{% extends "layout.html" %}
+{% block content %}
+<section class="glass" style="max-width:720px;margin:24px auto;padding:16px">
+  <h2 style="margin:0 0 12px">{{ 'Новая группа' if not item else 'Редактирование группы' }}</h2>
+  <form method="post" class="form">
+    <div style="display:grid;gap:10px">
+      <label>Код группы
+        <input name="code" class="date-input" required value="{{ item.code if item else '' }}">
+      </label>
+      <label>Название
+        <input name="name" class="date-input" value="{{ item.name if item else '' }}">
+      </label>
+      <label>Количество человек
+        <input name="students_count" type="number" min="0" class="date-input" value="{{ item.students_count if item else 0 }}">
+      </label>
+      <label>Уровень образования (произв.)
+        <input name="education_level" class="date-input" value="{{ item.education_level if item else '' }}" placeholder="СПО / ВО / ...">
+      </label>
+      <div style="display:flex;gap:8px">
+        <button class="btn" type="submit">Сохранить</button>
+        <a class="btn ghost" href="{{ url_for('admin.groups_list') }}">Отмена</a>
+      </div>
+    </div>
+  </form>
+</section>
+{% endblock %}

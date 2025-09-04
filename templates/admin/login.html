@@ -1,0 +1,18 @@
+{% extends "layout.html" %}
+{% block content %}
+<section class="glass" style="max-width:520px;margin:24px auto;padding:20px">
+  <h2 style="margin:0 0 12px">Вход администратора</h2>
+  <form method="post" class="form">
+    <div style="display:grid;gap:10px">
+      <label>Логин
+        <input name="username" class="date-input" placeholder="admin" required>
+      </label>
+      <label>Пароль
+        <input name="password" type="password" class="date-input" placeholder="admin" required>
+      </label>
+      <button class="btn" type="submit">Войти</button>
+    </div>
+    <p class="muted" style="margin-top:8px">Тестовые данные: <code>admin / admin</code></p>
+  </form>
+</section>
+{% endblock %}
