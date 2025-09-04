@@ -1,0 +1,135 @@
+{% extends "layout.html" %}
+{% block content %}
+<section class="glass" style="padding:16px;">
+  <h2 style="margin:6px 0 12px;">Планировщик: добавить занятие</h2>
+
+  <form method="post" action="{{ url_for('planning.builder_create') }}" id="builder-form">
+    <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;">
+      <label>Дата
+        <input type="date" name="date" value="{{ today_str }}" required>
+      </label>
+
+      <label>Группа
+        <select name="group_id" required>
+          <option value="">—</option>
+          {% for g in groups %}
+            <option value="{{ g.id }}">{{ getattr(g,'code', None) or getattr(g,'name','') }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>Предмет
+        <select name="subject_id" required>
+          <option value="">—</option>
+          {% for s in subjects %}
+            <option value="{{ s.id }}">{{ getattr(s,'name',None) or getattr(s,'title','') }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>Преподаватель
+        <select name="teacher_id" required>
+          <option value="">—</option>
+          {% for t in teachers %}
+            <option value="{{ t.id }}">{{ getattr(t,'full_name',None) or (getattr(t,'last_name','') ~ ' ' ~ getattr(t,'first_name','')) }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>Тип занятия
+        <select name="lesson_type_id">
+          <option value="">—</option>
+          {% for lt in lesson_types %}
+            <option value="{{ lt.id }}">{{ getattr(lt,'name',None) or getattr(lt,'title','') }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      {% if slots %}
+      <label>Слот (пара)
+        <select name="time_slot_id" id="slot-select">
+          <option value="">—</option>
+          {% for s in slots %}
+            <option value="{{ s.id }}">
+              {% if hasattr(s,'order_no') %}№{{ s.order_no }}{% elif hasattr(s,'order') %}№{{ s.order }}{% endif %}
+              ({{ getattr(s,'start_time',None) }}–{{ getattr(s,'end_time',None) }})
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+      {% endif %}
+
+      <label>Аудитория
+        <select name="room_id" id="room-select">
+          <option value="">—</option>
+          {% for r in rooms %}
+            <option value="{{ r.id }}">{{ getattr(r,'number','') }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>Дистанционно
+        <input type="checkbox" name="is_remote" value="1">
+      </label>
+
+      <label>Требуются ПК
+        <input type="checkbox" name="require_pc" value="1" id="require-pc">
+      </label>
+
+      {% if not slots %}
+      <label>Начало
+        <input type="time" name="start_time">
+      </label>
+      <label>Конец
+        <input type="time" name="end_time">
+      </label>
+      <label>№ пары (если нет времени)
+        <input type="number" name="order_no" min="1" step="1">
+      </label>
+      {% endif %}
+    </div>
+
+    <div id="check-panel" class="glass" style="margin-top:12px;padding:12px;">
+      <button type="button" class="btn" id="btn-check">Проверить конфликты</button>
+      <button type="submit" class="btn" style="margin-left:8px;">Создать пару</button>
+
+      <div id="check-results" style="margin-top:10px;"></div>
+    </div>
+  </form>
+</section>
+
+<script>
+  async function doCheck() {
+    const form = document.getElementById('builder-form');
+    const data = Object.fromEntries(new FormData(form).entries());
+    data.is_remote = form.querySelector('input[name="is_remote"]').checked ? '1' : '0';
+    data.require_pc = form.querySelector('input[name="require_pc"]').checked ? '1' : '0';
+
+    const r = await fetch('{{ url_for("planning.builder_check") }}', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(data)
+    });
+    const res = await r.json();
+    const box = document.getElementById('check-results');
+    if (!res.ok) {
+      box.innerHTML = '<div class="muted">Найдено ошибок: '+res.errors.length+'</div>'
+        + res.errors.map(e => '<div style="color:#ff8080">• '+e.message+'</div>').join('');
+    } else {
+      box.innerHTML = '<div style="color:#2dbf7a">ОК: конфликтов не найдено.</div>';
+    }
+    if (res.suggestions && res.suggestions.rooms && res.suggestions.rooms.length) {
+      const sel = document.getElementById('room-select');
+      const seen = new Set(Array.from(sel.options).map(o => o.value));
+      res.suggestions.rooms.forEach(r => {
+        if (!seen.has(r.id.toString())) {
+          const opt = document.createElement('option');
+          opt.value = r.id; opt.textContent = r.label + ' (свободна)';
+          sel.appendChild(opt);
+        }
+      });
+    }
+  }
+  document.getElementById('btn-check')?.addEventListener('click', doCheck);
+</script>
+{% endblock %}
