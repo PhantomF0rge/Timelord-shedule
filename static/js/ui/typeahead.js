@@ -6,15 +6,38 @@ const box = () => $("#typeahead");
 
 let timer = null;
 
+// Демо-данные на случай пустой БД/ошибки с таблицами
+const DEMO_SUGGEST = [
+  { type: "group",   id: 1,   label: "ПИ-101", code: "PI-101" },
+  { type: "group",   id: 2,   label: "ИС-202", code: "IS-202" },
+  { type: "teacher", id: 101, label: "Иванов И.И." },
+  { type: "teacher", id: 102, label: "Петров П.П." },
+  { type: "subject", id: 201, label: "Программирование" },
+  { type: "subject", id: 202, label: "Высшая математика" },
+];
+
 async function fetchSuggest(q){
   try{
     const url = `${API}?q=${encodeURIComponent(q)}&limit=10`;
     const r = await fetch(url);
     if(!r.ok) throw new Error("suggest failed");
     const data = await r.json();
-    return data.items || [];
+    const items = data.items || [];
+    if(items.length) return items;
+
+    // Если API вернул пусто — подставим демо
+    const ql = q.trim().toLowerCase();
+    return DEMO_SUGGEST.filter(i =>
+      i.label.toLowerCase().includes(ql) ||
+      (i.code || "").toLowerCase().includes(ql)
+    );
   }catch(e){
-    return []; // заглушка, пока бэкенд не подключили
+    // На любой сбой — демо-фоллбек
+    const ql = q.trim().toLowerCase();
+    return DEMO_SUGGEST.filter(i =>
+      i.label.toLowerCase().includes(ql) ||
+      (i.code || "").toLowerCase().includes(ql)
+    );
   }
 }
 
@@ -52,7 +75,9 @@ export function initTypeahead(){
     const q = el.value.trim();
     if(timer) clearTimeout(timer);
     if(!q){ hide(box()); return; }
-    timer = setTimeout(async ()=>{ render(await fetchSuggest(q)); }, 300);
+    timer = setTimeout(async ()=>{
+      render(await fetchSuggest(q));
+    }, 300);
   });
   $("#search-clear")?.addEventListener("click", ()=>{
     el.value=""; hide(box());
