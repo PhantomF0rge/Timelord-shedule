@@ -1,5 +1,6 @@
 from flask import request, jsonify
 from sqlalchemy import func, or_
+from sqlalchemy.exc import OperationalError, ProgrammingError, DatabaseError
 from . import bp
 from extensions import db
 
@@ -28,10 +29,10 @@ def _collect_group(q: str, limit: int):
     items = []
     if not Group:
         return items
-    # допускаем поля code/name/label — берём что есть
     code_col = getattr(Group, "code", None)
     name_col = getattr(Group, "name", None)
     label_col = getattr(Group, "label", None)
+
     filters = []
     if code_col is not None:
         filters.append(_like(code_col, q))
@@ -41,9 +42,20 @@ def _collect_group(q: str, limit: int):
         filters.append(_like(label_col, q))
     if not filters:
         return items
-    query = db.session.query(Group).filter(or_(*filters)).order_by(*(c.asc() for c in [code_col or name_col] if c is not None)).limit(limit)
-    for g in query.all():
-        # пробуем извлечь код/название из доступных атрибутов
+
+    try:
+        query = (
+            db.session.query(Group)
+            .filter(or_(*filters))
+            .order_by(*(c.asc() for c in [code_col or name_col] if c is not None))
+            .limit(limit)
+        )
+        rows = query.all()
+    except (OperationalError, ProgrammingError, DatabaseError):
+        # БД/таблиц ещё нет — вернём пусто, чтобы не падал фронт
+        return []
+
+    for g in rows:
         code = getattr(g, "code", None)
         name = getattr(g, "name", None)
         label = getattr(g, "label", None)
@@ -51,7 +63,7 @@ def _collect_group(q: str, limit: int):
             "type": "group",
             "id": getattr(g, "id", None),
             "label": name or label or code or "Группа",
-            "code": code or (name or label)  # фронту важен code для сохранения в localStorage
+            "code": code or (name or label),
         })
     return items
 
@@ -67,16 +79,19 @@ def _collect_teacher(q: str, limit: int):
     if not Teacher:
         return items
     fields = []
-    # поддержим разные схемы ФИО
     for attr in ("full_name", "last_name", "first_name", "middle_name"):
         col = getattr(Teacher, attr, None)
         if col is not None:
             fields.append(col)
     if not fields:
         return items
-    filters = [ _like(col, q) for col in fields ]
-    query = db.session.query(Teacher).filter(or_(*filters)).limit(limit)
-    for t in query.all():
+    filters = [_like(col, q) for col in fields]
+    try:
+        query = db.session.query(Teacher).filter(or_(*filters)).limit(limit)
+        rows = query.all()
+    except (OperationalError, ProgrammingError, DatabaseError):
+        return []
+    for t in rows:
         items.append({
             "type": "teacher",
             "id": getattr(t, "id", None),
@@ -93,8 +108,12 @@ def _collect_subject(q: str, limit: int):
     field = name_col or title_col
     if field is None:
         return items
-    query = db.session.query(Subject).filter(_like(field, q)).limit(limit)
-    for s in query.all():
+    try:
+        query = db.session.query(Subject).filter(_like(field, q)).limit(limit)
+        rows = query.all()
+    except (OperationalError, ProgrammingError, DatabaseError):
+        return []
+    for s in rows:
         items.append({
             "type": "subject",
             "id": getattr(s, "id", None),
@@ -102,14 +121,13 @@ def _collect_subject(q: str, limit: int):
         })
     return items
 
-
 # ---------- SUGGEST (из БД с fallback'ом) ----------
 
 @bp.get("/suggest")
 def suggest():
     """
     GET /api/v1/suggest?q=&type=group|teacher|subject&limit=10
-    Ищет по БД. Если какая-то модель отсутствует — просто пропускаем её.
+    Ищет по БД. Если таблиц ещё нет — не падаем, возвращаем пустой список или моки.
     """
     q = (request.args.get("q") or "").strip()
     limit = int(request.args.get("limit") or 10)
@@ -118,17 +136,26 @@ def suggest():
     if not q:
         return jsonify({"items": []})
 
-    items = []
-    # порядок: группы → преподаватели → дисциплины
-    if not only_type or only_type == "group":
-        items += _collect_group(q, limit)
-    if (not only_type or only_type == "teacher") and len(items) < limit:
-        items += _collect_teacher(q, limit - len(items))
-    if (not only_type or only_type == "subject") and len(items) < limit:
-        items += _collect_subject(q, limit - len(items))
-
-    # safety: не больше limit
-    return jsonify({"items": items[:limit]})
+    try:
+        items = []
+        if not only_type or only_type == "group":
+            items += _collect_group(q, limit)
+        if (not only_type or only_type == "teacher") and len(items) < limit:
+            items += _collect_teacher(q, limit - len(items))
+        if (not only_type or only_type == "subject") and len(items) < limit:
+            items += _collect_subject(q, limit - len(items))
+        return jsonify({"items": items[:limit]})
+    except Exception:
+        # запасной план — небольшие моки для UX
+        mocks = [
+            {"type":"group","id":1,"label":"ПИ-101","code":"PI-101"},
+            {"type":"group","id":2,"label":"ИС-202","code":"IS-202"},
+            {"type":"teacher","id":101,"label":"Иванов И.И."},
+            {"type":"subject","id":201,"label":"Программирование"},
+        ]
+        ql = q.lower()
+        filtered = [m for m in mocks if ql in m["label"].lower() or ql in m.get("code","").lower()]
+        return jsonify({"items": filtered[:limit]})
 
 
 # ---------- SCHEDULE (пока прежний мок — заменим следующим шагом) ----------
