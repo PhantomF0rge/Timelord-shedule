@@ -1,7 +1,7 @@
 from flask import Blueprint
 
-# Не задаём url_prefix здесь, он задаётся в app.register_blueprint(..., url_prefix="/api/v1")
 bp = Blueprint("api", __name__)
 
-# важно: подтянуть маршруты при импорте блюпринта
+# ВАЖНО: импортируем роуты, чтобы endpoint'ы реально зарегистрировались.
+# Код в routes.py написан так, чтобы НЕ падать при импорте (мягкие импорты моделей).
 from . import routes  # noqa: E402,F401

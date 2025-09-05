@@ -1,328 +1,410 @@
-from datetime import date, datetime, timedelta
-import importlib
+from datetime import date, timedelta
 from flask import request, jsonify
-from sqlalchemy import func, or_
-from extensions import db
+from sqlalchemy import or_, func
 from . import bp
 
-# ---------- УНИВЕРСАЛЬНЫЕ ИМПОРТЫ МОДЕЛЕЙ С ФОЛЛБЭКАМИ ----------
-def _import_any(candidates):
-    last_err = None
-    for module_path, name in candidates:
-        try:
-            mod = importlib.import_module(module_path)
-            return getattr(mod, name)
-        except Exception as e:
-            last_err = e
-    if last_err:
-        # Вернём None — код ниже умеет работать с отсутствием отдельных моделей
-        return None
-    return None
-
-Group    = _import_any([("models.group", "Group"), ("models.groups", "Group")])
-Teacher  = _import_any([("models.teacher", "Teacher"), ("models.teachers", "Teacher")])
-Subject  = _import_any([("models.subject", "Subject"), ("models.subjects", "Subject")])
-Room     = _import_any([("models.room", "Room"), ("models.rooms", "Room")])
-Lesson   = _import_any([("models.lesson", "Lesson"), ("models.lessons", "Lesson")])
-TimeSlot = _import_any([("models.timeslot", "TimeSlot"), ("models.time_slot", "TimeSlot"), ("models.slot", "TimeSlot")])
-LessonType = _import_any([("models.lesson_type", "LessonType"), ("models.lessontype", "LessonType")])
-Homework = _import_any([("models.homework", "Homework")])
-
-# ---------- ВСПОМОГАТЕЛЬНОЕ ----------
-def _col(model, names):
-    """Вернуть первый существующий атрибут модели из списка имён (или None)."""
-    if not model:
-        return None
-    for n in names:
-        if hasattr(model, n):
-            return getattr(model, n)
-    return None
-
-def _to_hhmm(value):
-    """time|str|None -> 'HH:MM' или ''"""
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        # допускаем '8:30'/'08:30'
-        try:
-            parts = value.split(":")
-            h = int(parts[0]); m = int(parts[1])
-            return f"{h:02d}:{m:02d}"
-        except Exception:
-            return value
+# Мягкие импорты: берём то, что есть, без падений
+def _try_import(module_path, name):
     try:
-        return f"{value.hour:02d}:{value.minute:02d}"
+        mod = __import__(module_path, fromlist=[name])
+        return getattr(mod, name, None)
     except Exception:
-        return str(value)
+        return None
+
+# БД-сессия
+_extensions_db = _try_import("extensions", "db")
+db = _extensions_db
+
+# Модели (любая может отсутствовать — код переживёт)
+Group    = _try_import("models.group",    "Group")
+Teacher  = _try_import("models.teacher",  "Teacher")
+Subject  = _try_import("models.subject",  "Subject")
+TimeSlot = _try_import("models.timeslot", "TimeSlot")
+Lesson   = _try_import("models.lesson",   "Lesson")
+Room     = _try_import("models.room",     "Room")
+LType    = _try_import("models.lesson_type", "LessonType")
+Homework = _try_import("models.homework", "Homework")
+
+# ---- УТИЛИТЫ -----------------------------------------------------------------
 
 def _lesson_date_col():
-    """Определяем, по какому полю хранится дата занятия."""
-    return _col(Lesson, ["date", "lesson_date", "day"])
-
-def _lesson_order_col():
-    """Определяем поле с порядковым номером пары (если нет TimeSlot)."""
-    return _col(Lesson, ["order_no", "order"])
+    """Возвращает колонку даты у Lesson, как она называется в твоих моделях."""
+    if Lesson is None:
+        return None
+    for cand in ("date", "lesson_date", "day"):
+        if hasattr(Lesson, cand):
+            return getattr(Lesson, cand)
+    return None
 
 def _slot_order_col():
-    return _col(TimeSlot, ["order_no", "order"])
+    """Возвращает колонку порядка у TimeSlot: order_no или order."""
+    if TimeSlot is None:
+        return None
+    for cand in ("order_no", "order"):
+        if hasattr(TimeSlot, cand):
+            return getattr(TimeSlot, cand)
+    return None
 
-def _slot_start_col():
-    return _col(TimeSlot, ["start_time", "start"])
+def _time_cols(model):
+    """Вернёт (start_time, end_time) если есть у модели."""
+    st = getattr(model, "start_time", None) if model else None
+    et = getattr(model, "end_time", None) if model else None
+    return st, et
 
-def _slot_end_col():
-    return _col(TimeSlot, ["end_time", "end"])
-
-def _group_code_col():
-    return _col(Group, ["code"])
-
-def _group_name_col():
-    return _col(Group, ["name", "title", "label"])
-
-def _teacher_name_display(t):
-    # предпочитаем full_name; иначе склеим ФИО из имеющихся частей
-    val = getattr(t, "full_name", None)
-    if val:
-        return val
-    ln = getattr(t, "last_name", "") or ""
-    fn = getattr(t, "first_name", "") or ""
-    mn = getattr(t, "middle_name", "") or ""
-    return " ".join(x for x in [ln, fn, mn] if x).strip()
-
-def _subject_name_display(s):
-    return getattr(s, "name", None) or getattr(s, "title", None) or ""
-
-def _room_number_display(r):
-    return getattr(r, "number", None) or getattr(r, "name", None) or ""
-
-def _lesson_type_name_display(lt):
-    return getattr(lt, "name", None) or getattr(lt, "title", None) or "Занятие"
-
-def _bool_attr(obj, names, default=False):
+def _safe_val(obj, *names, default=None):
+    """Вернёт первое существующее свойство из names у объекта."""
     for n in names:
-        if hasattr(obj, n):
-            return bool(getattr(obj, n))
+        if obj is not None and hasattr(obj, n):
+            return getattr(obj, n)
     return default
 
-def _serialize_lesson(l):
-    """Собираем единый формат занятия для фронта."""
-    # связь со слотами (если есть FK)
-    ts = getattr(l, "time_slot", None)
+def _get_by_id(Model, id_):
+    if Model is None or id_ is None or db is None:
+        return None
+    try:
+        return db.session.get(Model, id_)
+    except Exception:
+        return None
 
-    # времена и номер
-    if ts is not None:
-        s = _to_hhmm(getattr(ts, _slot_start_col().__name__, None) if _slot_start_col() else getattr(ts, "start_time", None))
-        e = _to_hhmm(getattr(ts, _slot_end_col().__name__, None) if _slot_end_col() else getattr(ts, "end_time", None))
-        ord_val = getattr(ts, _slot_order_col().__name__, None) if _slot_order_col() else getattr(ts, "order_no", None)
+def _subject_of(lesson):
+    # либо отношение, либо по FK
+    s = _safe_val(lesson, "subject", default=None)
+    if s is None:
+        s_id = _safe_val(lesson, "subject_id", default=None)
+        s = _get_by_id(Subject, s_id)
+    return s
+
+def _teacher_of(lesson):
+    t = _safe_val(lesson, "teacher", default=None)
+    if t is None:
+        t_id = _safe_val(lesson, "teacher_id", default=None)
+        t = _get_by_id(Teacher, t_id)
+    return t
+
+def _room_of(lesson):
+    r = _safe_val(lesson, "room", default=None)
+    if r is None:
+        r_id = _safe_val(lesson, "room_id", default=None)
+        r = _get_by_id(Room, r_id)
+    return r
+
+def _ltype_of(lesson):
+    lt = _safe_val(lesson, "lesson_type", default=None)
+    if lt is None:
+        lt_id = _safe_val(lesson, "lesson_type_id", default=None)
+        lt = _get_by_id(LType, lt_id)
+    return lt
+
+def _homework_of(lesson):
+    # либо отношение Homeworks, либо отдельная модель с FK lesson_id
+    hw = _safe_val(lesson, "homework", default=None)
+    if hw:
+        return hw
+    if Homework is None or db is None:
+        return None
+    try:
+        return db.session.query(Homework).filter(
+            _safe_val(Homework, "lesson_id") == _safe_val(lesson, "id")
+        ).first()
+    except Exception:
+        return None
+
+def _lesson_to_json(lesson, slot_cache=None):
+    """Собираем JSON пары. Работает даже с урезанными моделями."""
+    # время и номер пары — пытаемся брать из TimeSlot, если задан
+    slot = None
+    ts_id = _safe_val(lesson, "time_slot_id", default=None)
+    if ts_id and slot_cache is not None:
+        slot = slot_cache.get(ts_id)
+
+    # если слота нет — берём из полей самой пары, если такие есть
+    l_start = _safe_val(lesson, "start_time", default=None)
+    l_end   = _safe_val(lesson, "end_time", default=None)
+    l_ord   = _safe_val(lesson, "order_no", "order", default=None)
+
+    if slot is not None:
+        s_start = _safe_val(slot, "start_time")
+        s_end   = _safe_val(slot, "end_time")
+        s_ord   = _safe_val(slot, "order_no", "order")
+        start_time = (s_start or l_start)
+        end_time   = (s_end   or l_end)
+        order_no   = (s_ord   or l_ord)
     else:
-        # нет связи со слотами — попробуем взять из полей самой пары
-        s = _to_hhmm(getattr(l, "start_time", None))
-        e = _to_hhmm(getattr(l, "end_time", None))
-        ord_val = getattr(l, _lesson_order_col().__name__, None) if _lesson_order_col() else getattr(l, "order_no", None)
+        start_time = l_start
+        end_time   = l_end
+        order_no   = l_ord
 
-    subj = getattr(l, "subject", None)
-    tchr = getattr(l, "teacher", None)
-    room = getattr(l, "room", None)
-    ltype = getattr(l, "lesson_type", None)
-    hw = None
-    if Homework and hasattr(l, "homeworks"):
+    subj = _subject_of(lesson)
+    teach = _teacher_of(lesson)
+    room = _room_of(lesson)
+    ltype = _ltype_of(lesson)
+    hw = _homework_of(lesson)
+
+    is_remote = bool(_safe_val(lesson, "is_remote", "remote", "online", default=False))
+
+    def _time_to_str(t):
         try:
-            hw_obj = next(iter(getattr(l, "homeworks")), None)
-            if hw_obj:
-                hw = {"text": getattr(hw_obj, "text", "")}
+            return t.strftime("%H:%M")
+        except Exception:
+            return None
+
+    return {
+        "id": _safe_val(lesson, "id"),
+        "subject": {
+            "id": _safe_val(subj, "id"),
+            "name": _safe_val(subj, "name", "title", default=""),
+        },
+        "teacher": {
+            "id": _safe_val(teach, "id"),
+            "full_name": _safe_val(teach, "full_name",
+                                   default=(" ".join(filter(None, [
+                                       _safe_val(teach, "last_name", default=""),
+                                       _safe_val(teach, "first_name", default=""),
+                                       _safe_val(teach, "middle_name", default="")
+                                   ])).strip())),
+        },
+        "room": (None if is_remote else {
+            "id": _safe_val(room, "id"),
+            "number": _safe_val(room, "number", default=""),
+        }),
+        "lesson_type": ({
+            "id": _safe_val(ltype, "id"),
+            "name": _safe_val(ltype, "name", "title", default="")
+        } if ltype else None),
+        "time_slot": {
+            "id": ts_id,
+            "order_no": order_no,
+            "start_time": _time_to_str(start_time),
+            "end_time": _time_to_str(end_time),
+        },
+        "is_remote": is_remote,
+        "homework": ({"text": _safe_val(hw, "text", default="")} if hw else None),
+    }
+
+def _insert_breaks(day_lessons, all_slots):
+    """Вставляет 'перерывы' в отсутствующие слоты между первой и последней занятой парой."""
+    if not day_lessons or not all_slots:
+        return day_lessons
+
+    order_attr = "order_no" if hasattr(TimeSlot, "order_no") else "order"
+    slots_sorted = sorted(all_slots, key=lambda s: getattr(s, order_attr))
+    used_orders = set()
+    for l in day_lessons:
+        ts = l.get("time_slot") or {}
+        ord_no = ts.get("order_no")
+        if ord_no is not None:
+            used_orders.add(ord_no)
+
+    if not used_orders:
+        return day_lessons
+
+    min_ord = min(used_orders)
+    max_ord = max(used_orders)
+
+    slot_map = {getattr(s, order_attr): s for s in slots_sorted}
+
+    # Собираем финальный список с перерывами
+    out = []
+    # Для равномерной сортировки по порядку
+    all_by_order = { l["time_slot"]["order_no"]: l for l in day_lessons if l.get("time_slot") }
+
+    for ord_no in range(min_ord, max_ord + 1):
+        if ord_no in used_orders:
+            out.append(all_by_order[ord_no])
+        else:
+            s = slot_map.get(ord_no)
+            if not s:
+                continue
+            st, et = _time_cols(s)
+            out.append({
+                "is_break": True,
+                "from": st.strftime("%H:%M") if st else None,
+                "to": et.strftime("%H:%M") if et else None
+            })
+
+    # Сортируем на всякий
+    out.sort(key=lambda x: (0 if not x.get("is_break") else 1,
+                            x.get("time_slot", {}).get("order_no", 999)))
+    return out
+
+# ---- /suggest ---------------------------------------------------------------
+
+@bp.get("/suggest")
+def suggest():
+    """
+    GET /api/v1/suggest?q=...&limit=10
+    Возвращает items: [{type, id, label, code?}]
+    type: group|teacher|subject
+    """
+    if db is None:
+        return jsonify({"items": []})
+
+    q = (request.args.get("q") or "").strip().lower()
+    limit = int(request.args.get("limit", 10))
+
+    items = []
+
+    # Groups
+    if Group is not None and q:
+        try:
+            crit = or_(func.lower(Group.code).like(f"%{q}%"),
+                       func.lower(Group.name).like(f"%{q}%"))
+            groups = (
+                db.session.query(Group)
+                .filter(crit)
+                .order_by(Group.code.asc())
+                .limit(limit)
+                .all()
+            )
+            for g in groups:
+                items.append({
+                    "type": "group",
+                    "id": _safe_val(g, "id"),
+                    "label": f"{_safe_val(g,'code','')}{' · ' + _safe_val(g,'name','') if _safe_val(g,'name') else ''}",
+                    "code": _safe_val(g, "code")
+                })
         except Exception:
             pass
 
-    return {
-        "time_slot": {
-            "order_no": ord_val or 0,
-            "start_time": s or "",
-            "end_time": e or "",
-        },
-        "subject": {"name": _subject_name_display(subj)} if subj else {"name": ""},
-        "teacher": {"full_name": _teacher_name_display(tchr)} if tchr else {"full_name": ""},
-        "room": {"number": _room_number_display(room)} if room else None,
-        "lesson_type": {"name": _lesson_type_name_display(ltype)} if ltype else {"name": "Занятие"},
-        "is_remote": _bool_attr(l, ["is_remote", "remote", "online"], False),
-        "homework": hw
-    }
-
-def _insert_breaks(sorted_lessons):
-    """Вставляем «перерывы» между слотами, если есть разрывы во времени."""
-    out = []
-    prev_end = None
-    for item in sorted_lessons:
-        start = item["time_slot"]["start_time"]
-        if prev_end and start and prev_end < start:
-            out.append({"is_break": True, "from": prev_end, "to": start})
-        out.append(item)
-        prev_end = item["time_slot"]["end_time"]
-    return out
-
-def _parse_iso(dstr):
-    try:
-        return datetime.strptime(dstr, "%Y-%m-%d").date()
-    except Exception:
-        return date.today()
-
-# ---------- /suggest ----------
-@bp.get("/suggest")
-def suggest():
-    q = (request.args.get("q") or "").strip()
-    limit = int(request.args.get("limit") or 10)
-    items = []
-
-    if not q:
-        return jsonify({"items": []})
-
-    q_low = q.lower()
-
-    # groups
-    if Group:
-        code_c = _group_code_col()
-        name_c = _group_name_col()
-        conds = []
-        if code_c is not None:
-            conds.append(func.lower(code_c).like(f"%{q_low}%"))
-        if name_c is not None:
-            conds.append(func.lower(name_c).like(f"%{q_low}%"))
-        if conds:
-            rows = (
-                db.session.query(Group)
-                .filter(or_(*conds))
-                .order_by(code_c.asc() if code_c is not None else name_c.asc())
-                .limit(limit)
-                .all()
-            )
-            for g in rows:
-                code_val = getattr(g, code_c.key if code_c is not None else "code", None)
-                label_val = getattr(g, name_c.key if name_c is not None else "name", None)
-                items.append({
-                    "type": "group",
-                    "id": getattr(g, "id", None),
-                    "code": code_val,
-                    "label": code_val or label_val or f"Группа #{getattr(g, 'id', '')}"
-                })
-
-    # teachers
-    if Teacher:
-        full = _col(Teacher, ["full_name"])
-        ln = _col(Teacher, ["last_name"])
-        fn = _col(Teacher, ["first_name"])
-        mn = _col(Teacher, ["middle_name"])
-
-        conds = []
-        if full is not None:
-            conds.append(func.lower(full).like(f"%{q_low}%"))
-        if ln is not None:
-            conds.append(func.lower(ln).like(f"%{q_low}%"))
-        if fn is not None:
-            conds.append(func.lower(fn).like(f"%{q_low}%"))
-        if mn is not None:
-            conds.append(func.lower(mn).like(f"%{q_low}%"))
-        if conds:
-            rows = (
+    # Teachers
+    if Teacher is not None and q:
+        try:
+            parts = [func.lower(Teacher.full_name).like(f"%{q}%")]
+            # Если ФИО разбито — ищем и по ним
+            for attr in ("last_name", "first_name", "middle_name"):
+                if hasattr(Teacher, attr):
+                    parts.append(func.lower(getattr(Teacher, attr)).like(f"%{q}%"))
+            crit = or_(*parts)
+            teachers = (
                 db.session.query(Teacher)
-                .filter(or_(*conds))
-                .order_by((full or ln).asc())
+                .filter(crit)
+                .order_by(Teacher.id.asc())
                 .limit(limit)
                 .all()
             )
-            for t in rows:
+            for t in teachers:
                 items.append({
                     "type": "teacher",
-                    "id": getattr(t, "id", None),
-                    "label": _teacher_name_display(t)
+                    "id": _safe_val(t, "id"),
+                    "label": _safe_val(t, "full_name",
+                                       default=(" ".join(filter(None, [
+                                           _safe_val(t, "last_name", default=""),
+                                           _safe_val(t, "first_name", default=""),
+                                           _safe_val(t, "middle_name", default="")
+                                       ])).strip()))
                 })
+        except Exception:
+            pass
 
-    # subjects
-    if Subject:
-        nm = _col(Subject, ["name", "title"])
-        if nm is not None:
-            rows = (
-                db.session.query(Subject)
-                .filter(func.lower(nm).like(f"%{q_low}%"))
-                .order_by(nm.asc())
-                .limit(limit)
-                .all()
-            )
-            for s in rows:
-                items.append({
-                    "type": "subject",
-                    "id": getattr(s, "id", None),
-                    "label": _subject_name_display(s)
-                })
+    # Subjects
+    if Subject is not None and q:
+        try:
+            parts = []
+            for attr in ("name", "title"):
+                if hasattr(Subject, attr):
+                    parts.append(func.lower(getattr(Subject, attr)).like(f"%{q}%"))
+            if parts:
+                crit = or_(*parts)
+                subjects = (
+                    db.session.query(Subject)
+                    .filter(crit)
+                    .order_by(_safe_val(Subject, "name", "title"))
+                    .limit(limit)
+                    .all()
+                )
+                for s in subjects:
+                    items.append({
+                        "type": "subject",
+                        "id": _safe_val(s, "id"),
+                        "label": _safe_val(s, "name", "title", default="")
+                    })
+        except Exception:
+            pass
 
     return jsonify({"items": items})
 
-# ---------- /schedule/group/<code> ----------
+# ---- /schedule/group/<code>  -----------------------------------------------
+
 @bp.get("/schedule/group/<code>")
 def schedule_group(code):
-    """Вернуть расписание группы на день или неделю.
-    ?date=YYYY-MM-DD&range=day|week
     """
-    if not Group or not Lesson:
-        return jsonify({"lessons": []})  # минимальная защита
+    GET /api/v1/schedule/group/<code>?date=YYYY-MM-DD&range=day|week
+    Возвращает:
+      - range=day: {date, lessons:[...] }
+      - range=week: {week_start, week_end, days:[{date, lessons:[...]}] }
+    """
+    if db is None or Lesson is None or Group is None:
+        return jsonify({"error": "models unavailable", "lessons": []}), 200
 
-    date_str = request.args.get("date") or date.today().isoformat()
-    range_mode = (request.args.get("range") or "day").lower()
-    target = _parse_iso(date_str)
+    # Параметры
+    try:
+        day_str = request.args.get("date")
+        base_day = date.fromisoformat(day_str) if day_str else date.today()
+    except Exception:
+        base_day = date.today()
+    rng = request.args.get("range", "day").lower()
+    if rng not in ("day", "week"):
+        rng = "day"
 
-    # Найти группу по коду (или по имени, если поле code отсутствует)
-    code_c = _group_code_col()
-    name_c = _group_name_col()
-    q = db.session.query(Group)
-    if code_c is not None:
-        grp = q.filter(func.lower(code_c) == code.lower()).first()
-    else:
-        grp = q.filter(func.lower(name_c) == code.lower()).first() if name_c is not None else None
+    # Ищем группу
+    g = db.session.query(Group).filter(Group.code == code).first()
+    if not g:
+        return jsonify({"date": base_day.isoformat(), "lessons": []}), 200
 
-    if not grp:
-        return jsonify({"lessons": []})
+    # Загружаем все слоты (для «перерывов») и подготовим кэш
+    slot_order_col = _slot_order_col()
+    slot_start, slot_end = _time_cols(TimeSlot)
+    all_slots = []
+    slot_cache = {}
+    if TimeSlot is not None and slot_order_col is not None:
+        try:
+            all_slots = (
+                db.session.query(TimeSlot)
+                .order_by(slot_order_col.asc())
+                .all()
+            )
+            for s in all_slots:
+                slot_cache[_safe_val(s, "id")] = s
+        except Exception:
+            all_slots = []
 
-    if range_mode == "week":
-        # Понедельник той недели
-        start = target - timedelta(days=(target.weekday() % 7))
-        days = []
-        for i in range(7):
-            d = start + timedelta(days=i)
-            lessons = _load_day_lessons(grp, d)
-            days.append({"date": d.isoformat(), "lessons": lessons})
-        return jsonify({"days": days})
+    date_col = _lesson_date_col()
 
-    # по умолчанию: день
-    lessons = _load_day_lessons(grp, target)
-    return jsonify({"lessons": lessons})
+    def _fetch_for_day(d: date):
+        q = db.session.query(Lesson).filter(_safe_val(Lesson, "group_id") == _safe_val(g, "id"))
 
-def _load_day_lessons(group_obj, day_dt):
-    """Загрузить пары на конкретный день и вернуть сериализованный список с перерывами."""
-    day_col = _lesson_date_col()
-    if day_col is None:
-        # если в модели урока нет поля даты — нечего отдавать
-        return []
+        if date_col is not None:
+            q = q.filter(date_col == d)
 
-    # Базовый запрос по группе и дате
-    q = db.session.query(Lesson).filter(
-        day_col == day_dt
-    )
+        # сортировка: по order_no/ order (если есть), иначе по time_slot -> по слоту
+        order_attr = "order_no" if hasattr(Lesson, "order_no") else ("order" if hasattr(Lesson, "order") else None)
+        if order_attr is not None:
+            q = q.order_by(getattr(Lesson, order_attr).asc())
+        elif hasattr(Lesson, "time_slot_id") and slot_order_col is not None:
+            # сортируем через join слотов
+            try:
+                q = q.join(TimeSlot, _safe_val(Lesson, "time_slot_id") == _safe_val(TimeSlot, "id")) \
+                     .order_by(slot_order_col.asc())
+            except Exception:
+                pass
 
-    # фильтр по группе — пробуем разные варианты
-    if hasattr(Lesson, "group_id") and hasattr(group_obj, "id"):
-        q = q.filter(getattr(Lesson, "group_id") == getattr(group_obj, "id"))
-    elif hasattr(Lesson, "group") and hasattr(group_obj, "id"):
-        # ORM-связь
-        q = q.filter(getattr(Lesson, "group") == group_obj)
-
-    # Сортировка по слоту/порядку
-    if hasattr(Lesson, "time_slot") and TimeSlot and _slot_order_col() is not None:
-        # если настроена связь с TimeSlot, отсортируем по order_no слота
-        # сделаем простой Python-сорт после выборки, чтобы не лепить join при любых схемах
         rows = q.all()
-        rows.sort(key=lambda l: getattr(getattr(l, "time_slot"), _slot_order_col().__name__, getattr(getattr(l, "time_slot"), "order_no", 0)) if getattr(l, "time_slot", None) else getattr(l, _lesson_order_col().__name__, getattr(l, "order_no", 0)))
-    else:
-        rows = q.order_by((_lesson_order_col() or _col(Lesson, ["start_time"])).asc()).all()
+        items = [_lesson_to_json(l, slot_cache=slot_cache) for l in rows]
+        items = _insert_breaks(items, all_slots)
+        return {"date": d.isoformat(), "lessons": items}
 
-    serialized = [_serialize_lesson(l) for l in rows]
-    # Вставим «перерывы» между занятиями
-    serialized.sort(key=lambda x: (x["time_slot"]["order_no"] or 0, x["time_slot"]["start_time"]))
-    serialized = _insert_breaks(serialized)
-    return serialized
+    if rng == "day":
+        return jsonify(_fetch_for_day(base_day)), 200
+
+    # week
+    # Неделя: понедельник..воскресенье с базовым днём внутри
+    week_start = base_day - timedelta(days=base_day.weekday())  # Пн
+    days = []
+    for i in range(7):
+        d = week_start + timedelta(days=i)
+        days.append(_fetch_for_day(d))
+    return jsonify({
+        "week_start": week_start.isoformat(),
+        "week_end": (week_start + timedelta(days=6)).isoformat(),
+        "days": days
+    }), 200
