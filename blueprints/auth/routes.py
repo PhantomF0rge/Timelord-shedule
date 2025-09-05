@@ -17,6 +17,7 @@ from werkzeug.security import check_password_hash
 
 from extensions import db, login_manager
 from models import User
+from flask_wtf.csrf import generate_csrf, validate_csrf  # добавь validate_csrf (generate_csrf уже есть)
 
 bp = Blueprint("auth", __name__, template_folder="../../templates", static_folder="../../static")
 api_bp = Blueprint("auth_api", __name__)
@@ -48,22 +49,19 @@ def issue_csrf() -> str:
     return token
 
 def verify_csrf() -> None:
-    # Только для изменяющих методов
     if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
         return
-
-    # Разрешаем логин и получение токена без проверки
-    if request.path in ("/api/v1/auth/login", "/api/v1/csrf"):
-        return
-
-    # Проверяем только API-префикс
     if not request.path.startswith("/api/"):
         return
 
+    # ⬇️ CSRF не проверяем для логина и выдачи токена
+    if request.path in ("/api/v1/auth/login", "/api/v1/csrf", "/api/v1/auth/csrf"):
+        return
+
     token = request.headers.get("X-CSRF-Token") or request.form.get("csrf_token")
-    if not token or token != session.get("csrf_token"):
-        # Это реальная «плохая форма» запроса → 400
-        from flask import abort
+    try:
+        validate_csrf(token)
+    except Exception:
         abort(400, description="CSRF token missing or invalid")
 
 @bp.before_app_request
@@ -154,7 +152,7 @@ def ping_teacher():
 # === НУЖНЫЙ ЭНДПОИНТ ДЛЯ ТЕСТА ===
 @api_bp.get("/csrf")
 def api_csrf():
-    token = issue_csrf()
+    token = generate_csrf()
     resp = jsonify({"csrf": token})   # ключ ИМЕННО 'csrf' — так ждёт тест
     resp.set_cookie("csrf_token", token, samesite="Lax", httponly=False, path="/")
     return resp

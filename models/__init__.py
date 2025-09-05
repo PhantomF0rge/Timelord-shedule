@@ -4,6 +4,8 @@ from flask_login import UserMixin
 from sqlalchemy import Enum, UniqueConstraint, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from extensions import db
+from .planning import PlanningPreview  # NEW
+from werkzeug.security import generate_password_hash
 
 # Enums
 EducationLevelEnum = Enum("ВО", "СПО", name="education_level")
@@ -200,3 +202,13 @@ class Conflict(db.Model):
     status: Mapped[str] = mapped_column(ConflictStatusEnum, default="OPEN", index=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
     resolved_at: Mapped[datetime | None]
+
+class AuditLog(db.Model):
+    __tablename__ = "audit_logs"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, nullable=True)
+    action = db.Column(db.String, nullable=False)        # CREATE / UPDATE / DELETE
+    entity = db.Column(db.String, nullable=False)        # 'schedule' и т.п.
+    entity_id = db.Column(db.Integer, nullable=True)
+    payload = db.Column(db.JSON, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)

@@ -1,0 +1,8 @@
+{% extends "admin/base_admin.html" %}
+{% block content %}
+<h2>Справочник: {{ entity }}</h2>
+<div class="muted">CRUD через существующие API. Ниже — универсальный рендер.</div>
+<div id="dir-root"></div>
+<script>window.__DIR_ENTITY__ = "{{ entity }}";</script>
+<script src="/static/js/admin/directory.js"></script>
+{% endblock %}

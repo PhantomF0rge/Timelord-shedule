@@ -1,0 +1,101 @@
+<!-- templates/import_export/index.html -->
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Импорт CSV</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 16px; }
+    .row { margin: 8px 0; }
+    table { border-collapse: collapse; margin-top: 8px; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: 6px 8px; }
+    select, input[type=file], button { padding: 6px 8px; }
+    code { background: #f6f8fa; padding: 2px 4px; border-radius: 4px;}
+  </style>
+</head>
+<body>
+  <h2>Импорт CSV</h2>
+  <div class="row">
+    <label>Сущность:
+      <select id="entity">
+        {% for e in entities %}<option value="{{e}}">{{e}}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+  <div class="row">
+    <input type="file" id="file" accept=".csv" />
+    <button id="btnPreview">Предпросмотр</button>
+  </div>
+
+  <div id="preview"></div>
+
+  <script>
+    async function csrf() {
+      const r = await fetch('/api/v1/csrf');
+      const js = await r.json();
+      return js.csrf || js.csrf_token || js.token;
+    }
+
+    function formDataWithFile(file, extra={}){
+      const fd = new FormData();
+      fd.append('file', file);
+      for (const [k,v] of Object.entries(extra)) { fd.append(k, typeof v === 'string' ? v : JSON.stringify(v)); }
+      return fd;
+    }
+
+    document.getElementById('btnPreview').onclick = async () => {
+      const file = document.getElementById('file').files[0];
+      const entity = document.getElementById('entity').value;
+      if (!file) return alert('Выберите CSV');
+      const t = await csrf();
+      const resp = await fetch(`/api/v1/admin/import/preview?entity=${encodeURIComponent(entity)}`, {
+        method: 'POST',
+        headers: {'X-CSRF-Token': t},
+        body: formDataWithFile(file)
+      });
+      const js = await resp.json();
+      if (!js.ok) { alert('Ошибка предпросмотра'); return; }
+
+      const cont = document.getElementById('preview');
+      cont.innerHTML = '';
+      cont.insertAdjacentHTML('beforeend', `<p><b>Колонки:</b> ${js.columns.join(', ')}</p>`);
+
+      // маппинг
+      const required = Object.keys(js.detected_mapping);
+      const mapping = js.detected_mapping || {};
+      let mapHtml = '<table><tr><th>Поле</th><th>Колонка</th></tr>';
+      for (const f of required) {
+        mapHtml += `<tr><td><code>${f}</code></td><td><select data-field="${f}">` +
+          js.columns.map(c => `<option value="${c}" ${mapping[f]===c?'selected':''}>${c}</option>`).join('') +
+          `</select></td></tr>`;
+      }
+      mapHtml += '</table>';
+      cont.insertAdjacentHTML('beforeend', mapHtml);
+      cont.insertAdjacentHTML('beforeend', `
+        <div class="row">
+          <button id="btnValidate">Проверить (dry-run)</button>
+          <button id="btnCommit">Импортировать</button>
+        </div>
+        <pre id="out" style="white-space:pre-wrap;background:#f6f8fa;padding:8px"></pre>
+      `);
+
+      async function run(url) {
+        const selects = [...cont.querySelectorAll('select[data-field]')];
+        const mapping = {};
+        for (const s of selects) mapping[s.dataset.field] = s.value;
+        const tkn = await csrf();
+        const r = await fetch(url + `?entity=${encodeURIComponent(entity)}`, {
+          method: 'POST',
+          headers: {'X-CSRF-Token': tkn},
+          body: formDataWithFile(file, {mapping})
+        });
+        const txt = await r.text();
+        cont.querySelector('#out').textContent = txt;
+      }
+      cont.querySelector('#btnValidate').onclick = () => run('/api/v1/admin/import/validate');
+      cont.querySelector('#btnCommit').onclick = () => run('/api/v1/admin/import/commit');
+    };
+  </script>
+</body>
+</html>
