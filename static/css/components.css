@@ -1,12 +1,23 @@
 .schedule-shell{margin:16px 0 40px}
 .site-footer{padding:24px 0 40px}
+.controls{display:flex;gap:12px;align-items:center;margin-top:12px}
+.btn-group{display:inline-flex;border-radius:12px;overflow:hidden;border:1px solid var(--panel-border)}
+.btn-group .btn{border:0;border-right:1px solid var(--panel-border)}
+.btn-group .btn:last-child{border-right:0}
+.btn.active{outline:2px solid var(--gold)}
+#date-input{appearance:none;background:rgba(255,255,255,.04);border:1px solid var(--panel-border);border-radius:12px;padding:10px;color:var(--text)}
+.toolbar { margin: 8px 0 12px; }
+.toolbar-inner { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; padding:12px; }
+.btn-group { display:inline-flex; gap:8px; }
+.btn.active { outline:2px solid var(--brand); }
 
-/* weekly grid: три карточки в ряд на десктопе */
-.schedule-grid.week { display: grid; gap: 12px; }
-@media (min-width: 900px){
-  .schedule-grid.week { grid-template-columns: repeat(3, 1fr); }
+.week-grid { display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:12px; }
+.day-card { padding:10px; }
+.day-title { font-weight:600; margin-bottom:6px; color:#e3e7f3; }
+
+.grid { display:grid; gap:12px; }
+.grid-2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+@media (max-width: 800px){
+  .week-grid { grid-template-columns: repeat(1, minmax(0,1fr)); }
+  .grid-2 { grid-template-columns: 1fr; }
 }
-
-.day-card{ border:1px solid var(--panel-border); border-radius:14px; overflow:hidden; }
-.day-head{ padding:10px 12px; border-bottom:1px solid var(--panel-border); font-weight:600; color:#e6e9f0; }
-.day-body{ padding:10px; display:grid; gap:10px; }

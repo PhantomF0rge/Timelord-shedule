@@ -19,37 +19,39 @@ from blueprints.api import bp as api_bp
 
 from models import *  # noqa
 
-def create_app(config_class=Config):
+def create_app():
     app = Flask(__name__, static_folder="static", template_folder="templates")
-    app.config.from_object(config_class)
+    app.config.from_object(Config)
 
-    # init extensions
     db.init_app(app)
-    migrate.init_app(app, db)
     login_manager.init_app(app)
 
-    # >>> ВАЖНО: пробрасываем питоновские функции в Jinja <<<
-    # теперь в шаблонах можно вызывать hasattr(...), getattr(...), isinstance(...)
-    app.jinja_env.globals.update(
-        hasattr=hasattr,
-        getattr=getattr,
-        isinstance=isinstance
-    )
-
-    # Register blueprints
+    # Регистрация обязательных блюпринтов
+    from blueprints.core import bp as core_bp
     app.register_blueprint(core_bp)
-    app.register_blueprint(auth_bp, url_prefix="/auth")
-    app.register_blueprint(search_bp, url_prefix="/search")
-    app.register_blueprint(schedule_bp, url_prefix="/schedule")
-    app.register_blueprint(directory_bp, url_prefix="/directory")
-    app.register_blueprint(planning_bp, url_prefix="/planning")
-    app.register_blueprint(constraints_bp, url_prefix="/constraints")
-    app.register_blueprint(homework_bp, url_prefix="/homework")
-    app.register_blueprint(teacher_bp, url_prefix="/teacher")
-    app.register_blueprint(admin_bp, url_prefix="/admin")
-    app.register_blueprint(reports_bp, url_prefix="/reports")
-    app.register_blueprint(import_export_bp, url_prefix="/import-export")
+
+    from blueprints.api import bp as api_bp
     app.register_blueprint(api_bp, url_prefix="/api/v1")
+
+    # Опциональные блюпринты — регистрируем, только если есть
+    def _try_register(import_path, attr, prefix=None):
+        try:
+            mod = __import__(import_path, fromlist=[attr])
+            bp = getattr(mod, attr)
+            app.register_blueprint(bp, url_prefix=prefix)
+        except Exception:
+            pass
+
+    _try_register("blueprints.admin", "bp", "/admin")
+    _try_register("blueprints.planning", "bp", "/planning")
+    _try_register("blueprints.search", "bp", "/search")
+    _try_register("blueprints.auth", "bp", "/auth")
+    _try_register("blueprints.schedule", "bp", "/schedule")
+    _try_register("blueprints.directory", "bp", "/directory")
+    _try_register("blueprints.teacher", "bp", "/teacher")
+    _try_register("blueprints.homework", "bp", "/homework")
+    _try_register("blueprints.reports", "bp", "/reports")
+    _try_register("blueprints.import_export", "bp", "/import-export")
 
     return app
 

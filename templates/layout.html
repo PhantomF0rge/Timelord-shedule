@@ -19,10 +19,10 @@
         <span class="brand-sub">расписание колледжа</span>
       </a>
       <nav class="main-nav">
-        <a href="/search/">Поиск</a>
-        <a href="/teacher/">Преподавателю</a>
-        <a href="/admin/">Админ</a>
-        <a href="/planning/builder">Планировщик</a>
+        <a href="{{ url_for('core.index') }}">Поиск</a>
+        <a href="{{ url_for('teacher.index') if 'teacher.index' in globals() else '#' }}">Преподавателю</a>
+        <a href="{{ url_for('admin.index') }}">Админ</a>
+        <a href="{{ url_for('planning.builder_index') }}">Планировщик</a>
       </nav>
     </div>
     {% include "partials/search_form.html" %}
@@ -33,10 +33,9 @@
   </main>
 
   <footer class="site-footer container">
-    <div class="muted">© Timelord · {{ config.get('ENV','prod') }}</div>
+    <div class="muted">© Timelord</div>
   </footer>
 
-  <!-- Один обычный скрипт без import/export -->
-  <script src="{{ url_for('static', filename='js/bundle.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/bundle.js') }}"></script>
 </body>
 </html>
