@@ -185,3 +185,9 @@ def api_login():
 def api_logout():
     logout_user()
     return jsonify({"ok": True})
+
+@bp.get("/logout")
+@login_required
+def logout_page():
+    logout_user()
+    return redirect(url_for("auth.login"))

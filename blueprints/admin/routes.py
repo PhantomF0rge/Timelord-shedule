@@ -8,27 +8,27 @@ from models import Schedule, Group, Teacher, Subject, Room, TimeSlot, AuditLog
 from blueprints.auth.routes import admin_required
 
 # ---------- PAGES ----------
-@bp.get("/admin")
+@bp.get("/")
 @login_required
 @admin_required
 def admin_dashboard():
     return render_template("admin/dashboard.html")
 
-@bp.get("/admin/directory/<entity>")
+@bp.get("/directory/<entity>")
 @login_required
 @admin_required
 def admin_directory(entity: str):
     # простая страница-обёртка, JS сам стучится в готовые API
     return render_template("admin/directory.html", entity=entity)
 
-@bp.get("/admin/schedule-editor")
+@bp.get("/schedule-editor")
 @login_required
 @admin_required
 def schedule_editor():
     return render_template("admin/schedule_editor.html")
 
 # ---------- API (summary для дашборда) ----------
-@api_bp.get("/admin/dashboard/summary")
+@api_bp.get("/dashboard/summary")
 @login_required
 @admin_required
 def dashboard_summary():
@@ -70,7 +70,7 @@ def dashboard_summary():
     })
 
 # (опционально) быстрый просмотр лога
-@api_bp.get("/admin/audit-logs")
+@api_bp.get("/audit-logs")
 @login_required
 @admin_required
 def audit_logs():
