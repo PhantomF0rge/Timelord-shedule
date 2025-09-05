@@ -7,22 +7,22 @@
   <meta name="theme-color" content="#8e0d2d">
   <title>{{ title }}</title>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/components.css') }}">
+  <link rel="stylesheet" href="/static/css/theme.css">
+  <link rel="stylesheet" href="/static/css/components.css">
 </head>
 <body class="page">
   <header class="site-header glass">
     <div class="container header-inner">
-      <a class="brand" href="{{ url_for('core.index') }}">
+      <a class="brand" href="/">
         <span class="brand-mark">TL</span>
         <span class="brand-title">Timelord</span>
         <span class="brand-sub">расписание колледжа</span>
       </a>
       <nav class="main-nav">
-        <a href="{{ url_for('core.index') }}">Поиск</a>
-        <a href="{{ url_for('teacher.index') if 'teacher.index' in globals() else '#' }}">Преподавателю</a>
-        <a href="{{ url_for('admin.index') }}">Админ</a>
-        <a href="{{ url_for('planning.builder_index') }}">Планировщик</a>
+        <a href="/search/">Поиск</a>
+        <a href="/teacher/">Преподавателю</a>
+        <a href="/planning/builder">Планировщик</a>
+        <a href="/admin/">Админ</a>
       </nav>
     </div>
     {% include "partials/search_form.html" %}
@@ -36,6 +36,7 @@
     <div class="muted">© Timelord</div>
   </footer>
 
-  <script src="{{ url_for('static', filename='js/bundle.js') }}"></script>
+  <!-- Единый бандл фронта -->
+  <script src="/static/js/bundle.js"></script>
 </body>
 </html>
