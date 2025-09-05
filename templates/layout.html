@@ -36,7 +36,7 @@
     <div class="muted">© Timelord · {{ config.get('ENV','prod') }}</div>
   </footer>
 
-  <!-- ВАЖНО: модульный бандл -->
-  <script type="module" src="{{ url_for('static', filename='js/app.js') }}"></script>
+  <!-- Один обычный скрипт без import/export -->
+  <script src="{{ url_for('static', filename='js/bundle.js') }}" defer></script>
 </body>
 </html>

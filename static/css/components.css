@@ -2,13 +2,11 @@
 .site-footer{padding:24px 0 40px}
 
 /* weekly grid: три карточки в ряд на десктопе */
-.schedule-grid.week{
-  display:grid;
-  gap:12px;
-}
+.schedule-grid.week { display: grid; gap: 12px; }
 @media (min-width: 900px){
-  .schedule-grid.week{ grid-template-columns: repeat(3, 1fr); }
+  .schedule-grid.week { grid-template-columns: repeat(3, 1fr); }
 }
+
 .day-card{ border:1px solid var(--panel-border); border-radius:14px; overflow:hidden; }
 .day-head{ padding:10px 12px; border-bottom:1px solid var(--panel-border); font-weight:600; color:#e6e9f0; }
 .day-body{ padding:10px; display:grid; gap:10px; }
