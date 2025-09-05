@@ -1,37 +1,18 @@
 .schedule-shell{margin:16px 0 40px}
 .site-footer{padding:24px 0 40px}
 
-/* Контролы: дата + переключатель диапазона */
-.controls{margin:12px 0 18px;padding:12px}
-.controls-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
-.date-input{appearance:none;background:rgba(255,255,255,.04);border:1px solid var(--panel-border);border-radius:10px;color:var(--text);padding:10px 12px;outline:none}
-.date-input:focus{border-color:var(--brand)}
-
-.segmented{display:inline-flex;border:1px solid var(--panel-border);border-radius:12px;overflow:hidden}
-.segmented .seg{border:0;background:transparent;color:var(--text);padding:10px 14px;cursor:pointer}
-.segmented .seg.active{background:rgba(255,255,255,.08)}
-.segmented .seg:focus-visible{outline:2px solid var(--brand)}
-
-/* Неделя: 3 карточки в строку, адаптив 2/1 */
+/* неделя: 3 карточки в ряд */
 .week-grid{
   display:grid;
-  grid-template-columns:repeat(3,minmax(260px,1fr));
+  grid-template-columns: repeat(3, minmax(0,1fr));
   gap:12px;
 }
-.day-card{
-  border:1px solid var(--panel-border);
-  border-radius:12px;
-  background:rgba(255,255,255,.04);
-  padding:10px;
-  min-height:120px;
+@media (max-width: 1024px){
+  .week-grid{ grid-template-columns: repeat(2, minmax(0,1fr)); }
 }
-.day-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
-.day-title{font-weight:700}
-.day-date{color:var(--muted);font-size:14px}
-
-@media (max-width: 1100px){
-  .week-grid{grid-template-columns:repeat(2,minmax(220px,1fr))}
+@media (max-width: 640px){
+  .week-grid{ grid-template-columns: 1fr; }
 }
-@media (max-width: 700px){
-  .week-grid{grid-template-columns:1fr}
-}
+.day-card{ border:1px solid var(--panel-border); border-radius:14px; overflow:hidden; }
+.day-head{ padding:10px 12px; border-bottom:1px solid var(--panel-border); font-weight:600; color:#e6e9f0; }
+.day-body{ padding:10px; display:grid; gap:10px; }
