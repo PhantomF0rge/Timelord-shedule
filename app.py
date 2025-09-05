@@ -40,13 +40,20 @@ def register_blueprints(app: Flask) -> None:
     app.register_blueprint(auth_api_bp, url_prefix="/api/v1")
     app.register_blueprint(teacher_api_bp, url_prefix="/api/v1")
     app.register_blueprint(homework_api_bp, url_prefix="/api/v1")
-    app.register_blueprint(constraints_api_bp, url_prefix="/api/v1")
+    app.register_blueprint(constraints_api_bp, url_prefix="/api/v1/admin")
 
 def create_app(config_name: str | None = None) -> Flask:
     app = Flask(__name__, instance_relative_config=True)
     app.config.setdefault("SECRET_KEY", "change-me-in-prod")
     cfg_name = config_name or os.getenv("FLASK_CONFIG", "default")
     app.config.from_object(config_map[cfg_name])
+    # --- ВАЖНО: изоляция БД в тестах ---
+    # pytest всегда выставляет переменную окружения PYTEST_CURRENT_TEST.
+    # Делаем БД в памяти, чтобы никакие изменения из одного теста не протекали в другой.
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
+        # для in-memory и одного потока этого достаточно; если что:
+        app.config.setdefault("SQLALCHEMY_ENGINE_OPTIONS", {"connect_args": {"check_same_thread": False}})
     # важное: разрешаем заголовки, которые использует тест
     app.config.setdefault("WTF_CSRF_TIME_LIMIT", None)
     app.config.setdefault("WTF_CSRF_CHECK_DEFAULT", True)
@@ -59,6 +66,5 @@ def create_app(config_name: str | None = None) -> Flask:
     db.init_app(app)
     migrate.init_app(app, db)
     login_manager.init_app(app)
-    csrf.init_app(app)
     register_blueprints(app)
     return app

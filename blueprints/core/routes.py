@@ -6,12 +6,8 @@ from uuid import uuid4
 from flask import g, jsonify, render_template, request
 from werkzeug.wrappers.response import Response
 
-from flask_wtf.csrf import generate_csrf
-from extensions import csrf
-
 from . import bp                 # используем bp из __init__.py
 from .filters import register_filters
-from . import api_bp
 
 VISITOR_COOKIE = "visitor_id"
 VISITOR_MAX_AGE = 60 * 60 * 24 * 180  # 180 дней
@@ -41,14 +37,6 @@ def _setup_structured_logging(app):
         handler.setFormatter(JSONFormatter())
         logger.addHandler(handler)
         logger.setLevel(logging.INFO)
-
-@api_bp.get("/csrf")
-@csrf.exempt          # токен выдаём без проверки
-def get_csrf():
-    token = generate_csrf()
-    resp = jsonify({"csrf": token})
-    resp.set_cookie("csrf_token", token, samesite="Lax")
-    return resp
 
 @bp.before_app_request
 def _ensure_visitor_and_start_timer():
