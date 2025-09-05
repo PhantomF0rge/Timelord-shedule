@@ -19,10 +19,10 @@
         <span class="brand-sub">расписание колледжа</span>
       </a>
       <nav class="main-nav">
-        <a href="/search">Поиск</a>
-        <a href="/teacher">Преподавателю</a>
-        <a href="{{ url_for('admin.index') }}">Админ</a>
-        <a href="{{ url_for('planning.builder_index') }}">Планировщик</a>
+        <a href="/search/">Поиск</a>
+        <a href="/teacher/">Преподавателю</a>
+        <a href="/admin/">Админ</a>
+        <a href="/planning/builder">Планировщик</a>
       </nav>
     </div>
     {% include "partials/search_form.html" %}
@@ -33,10 +33,10 @@
   </main>
 
   <footer class="site-footer container">
-    <div class="muted">© Timelord</div>
+    <div class="muted">© Timelord · {{ config.get('ENV','prod') }}</div>
   </footer>
 
-  <!-- ВАЖНО: модульный JS — один тег -->
+  <!-- ВАЖНО: модульный бандл -->
   <script type="module" src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>
