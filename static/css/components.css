@@ -1,0 +1,3 @@
+/* Доп. компоненты, потом расширим */
+.main-nav a { margin-right: 14px; color: var(--c-fg); text-decoration: none; }
+.main-nav a:hover { text-decoration: underline; }

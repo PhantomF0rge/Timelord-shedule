@@ -1,7 +1,6 @@
-from __future__ import annotations
-from flask import render_template, jsonify
+from flask import jsonify
 from . import bp
 
-@bp.get("/")
-def index():
-    return render_template("core/index.html")
+@bp.route("/_alive")
+def _alive():
+    return jsonify(module=bp.name, ok=True)

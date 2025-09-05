@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Главная — Расписание{% endblock %}
+{% block content %}
+<section class="card glass p-24">
+  <h1 class="mb-12">Найдите своё расписание</h1>
+  <div class="row gap-12 wrap">
+    <div class="field">
+      <label class="label">Группа / Преподаватель / Дисциплина</label>
+      <input id="q" type="text" class="input" placeholder="Например, ПИ-101 или Иванов" autocomplete="off">
+      <div id="suggest" class="suggest"></div>
+    </div>
+    <div class="field">
+      <label class="label">Дата</label>
+      <input id="date" type="date" class="input">
+    </div>
+    <div class="field">
+      <label class="label">Период</label>
+      <div class="btn-group" role="group" aria-label="Диапазон">
+        <button class="btn" data-range="day">День</button>
+        <button class="btn" data-range="week">Неделя</button>
+      </div>
+    </div>
+  </div>
+  <div id="result" class="mt-16"></div>
+</section>
+{% endblock %}

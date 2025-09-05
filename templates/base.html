@@ -1,45 +1,44 @@
 <!doctype html>
-<html lang="ru">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{% block title %}Колледж · Расписание{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}" />
-  </head>
-  <body>
-    <header class="site-header">
-      <div class="container">
-        <a href="/" class="logo">Timelord</a>
-        <nav>
-          <a href="/search">Поиск</a>
-          <a href="/teacher/me">Преподавателю</a>
-          <a href="/admin">Админ</a>
-        </nav>
+<html lang="ru" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{% block title %}Расписание колледжа{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/tokens.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.light.css') }}" media="(prefers-color-scheme: light)">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.dark.css') }}" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/components.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <a class="skip-link" href="#main">К содержанию</a>
+  <header class="site-header glass">
+    <div class="container row between center">
+      <div class="brand">
+        <span class="logo">🎓</span>
+        <strong>Расписание колледжа</strong>
       </div>
-    </header>
+      <nav class="main-nav">
+        <a href="{{ url_for('core.index') }}">Главная</a>
+        <a href="/search">Поиск</a>
+        <a href="/teacher">Преподавателю</a>
+        <a href="/admin">Админ</a>
+      </nav>
+      <button id="themeToggle" class="btn ghost" aria-label="Переключить тему">🌓</button>
+    </div>
+  </header>
 
-    <main class="container">
-      {% block content %}{% endblock %}
-    </main>
+  <main id="main" class="container">
+    {% block content %}{% endblock %}
+  </main>
 
-    <footer class="site-footer">
-      <div class="container">© {{ 2025 }} Timelord Schedule</div>
-    </footer>
+  <footer class="site-footer">
+    <div class="container small muted">
+      v{{ config.get('APP_VERSION', 'dev') }} · <a href="/health">/health</a>
+    </div>
+  </footer>
 
-    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
-    <script>
-      // Пример автоподстановки последней группы (если на странице есть input[name="group"])
-      document.addEventListener('DOMContentLoaded', () => {
-        const inp = document.querySelector('input[name="group"]');
-        if (inp && !inp.value) {
-          const g = TimelordStorage.getLastGroup();
-          if (g) inp.value = g;
-        }
-        // Сохраняем при вводе
-        if (inp) {
-          inp.addEventListener('change', () => TimelordStorage.setLastGroup(inp.value.trim()));
-        }
-      });
-    </script>
-  </body>
+  <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+  {% block scripts %}{% endblock %}
+</body>
 </html>
