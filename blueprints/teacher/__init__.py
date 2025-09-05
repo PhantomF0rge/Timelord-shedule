@@ -1,5 +1,3 @@
 from flask import Blueprint
-
-bp = Blueprint("teacher", __name__, template_folder="../../templates", static_folder="../../static",
-               url_prefix=/teacher)
+bp = Blueprint("teacher", __name__, template_folder="../../templates", static_folder="../../static")
 from . import routes  # noqa

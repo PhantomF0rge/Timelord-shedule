@@ -1,2 +1,1 @@
-# Data (de)serialization schemas for planning module.
-# Keep API representations separated from models.
+# pydantic/marshmallow schemas if needed

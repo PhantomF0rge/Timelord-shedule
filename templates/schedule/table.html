@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Расписание{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/schedule.css') }}">
+{% endblock %}
+{% block extra_js %}
+<script defer src="{{ url_for('static', filename='js/schedule.js') }}"></script>
+{% endblock %}
+{% block content %}
+<section class="container">
+  <div class="sch-header">
+    <div>
+      <strong>{{ payload.entity.type == 'group' and ('Группа ' ~ payload.entity.code) or ('Преподаватель #' ~ payload.entity.id) }}</strong>
+      <span class="muted">· диапазон: {{ payload.range }}</span>
+    </div>
+    <div class="controls" data-entity="{{ payload.entity.type }}" data-entity-id="{{ payload.entity.type == 'group' and payload.entity.code or payload.entity.id }}" data-range="{{ payload.range }}">
+      <button class="btn" data-act="prev">←</button>
+      <button class="btn" data-act="today">Сегодня</button>
+      <button class="btn" data-act="next">→</button>
+      <button class="btn" data-act="toggle-range">{{ payload.range == 'day' and 'Неделя' or 'День' }}</button>
+    </div>
+  </div>
+
+  {% if not payload.days %}
+    <div class="empty">Нет занятий в выбранный период.</div>
+  {% else %}
+    {% for day in payload.days %}
+      <h3 class="day-h">{{ day.date }}</h3>
+      <table class="sch">
+        <thead>
+          <tr>
+            <th>№</th><th>Время</th><th>Дисциплина</th><th>Преподаватель</th><th>Аудитория</th><th>Тип</th><th>Корпус</th><th>ДЗ</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for it in day.items %}
+          {% set cls = 'row ' ~ ('break' if it.is_break else it.status) ~ (it.is_remote and ' remote' or '') %}
+          <tr class="{{ cls }}">
+            <td>{{ it.slot_order }}</td>
+            <td>{{ it.start }}–{{ it.end }}</td>
+            {% if it.is_break %}
+              <td colspan="6"><em>перерыв</em></td><td></td>
+            {% else %}
+              <td>{{ it.subject }}</td>
+              <td>{{ it.teacher }}</td>
+              <td>
+                {% if it.is_remote %}<span class="badge">СДО</span>{% endif %}
+                {{ it.room or '—' }}
+              </td>
+              <td>{{ it.lesson_type }}</td>
+              <td>{{ it.building or '—' }}</td>
+              <td>{{ it.homework or '' }}</td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% endfor %}
+  {% endif %}
+
+  <div class="legend">
+    <span class="dot now"></span>идёт сейчас
+    <span class="dot next"></span>следующая
+    <span class="dot past"></span>прошла
+    <span class="dot remote"></span>дистанционно
+    <span class="dot break"></span>перерыв
+  </div>
+</section>
+{% endblock %}

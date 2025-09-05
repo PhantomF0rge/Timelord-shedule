@@ -1,19 +1,26 @@
+from __future__ import annotations
 import os
+from pathlib import Path
 
 class BaseConfig:
-    SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret")
-    SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", "sqlite:///instance/dev.db")
+    SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
+    BASE_DIR = Path(__file__).resolve().parent
+    # SQLite file in project directory
+    SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'app.db'}")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    # Flask-Caching
-    CACHE_TYPE = os.getenv("CACHE_TYPE", "SimpleCache")
-    CACHE_DEFAULT_TIMEOUT = int(os.getenv("CACHE_DEFAULT_TIMEOUT", "300"))
+    JSON_SORT_KEYS = False
 
-class DevelopmentConfig(BaseConfig):
+class DevConfig(BaseConfig):
     DEBUG = True
 
-class ProductionConfig(BaseConfig):
+class ProdConfig(BaseConfig):
     DEBUG = False
 
-class TestingConfig(BaseConfig):
-    TESTING = True
-    SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+config_map = {
+    "dev": DevConfig,
+    "prod": ProdConfig,
+    "default": DevConfig,
+}
+
+HOMEWORK_ALLOW_PAST = False         # запрещать ДЗ для уже прошедших занятий
+HOMEWORK_ADMIN_OVERRIDE = True      # админу можно всегда

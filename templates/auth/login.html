@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Вход{% endblock %}
+{% block content %}
+<section class="container" style="max-width:420px">
+  <h1>Вход</h1>
+  <form id="loginForm" class="card" onsubmit="return false;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label class="field">
+      <span>Email</span>
+      <input type="email" name="email" required autofocus>
+    </label>
+    <label class="field">
+      <span>Пароль</span>
+      <input type="password" name="password" required>
+    </label>
+    <button class="btn" id="btnLogin">Войти</button>
+    <div id="err" class="error" style="display:none"></div>
+  </form>
+</section>
+
+<script>
+document.querySelector('#btnLogin').addEventListener('click', async () => {
+  const f = document.querySelector('#loginForm');
+  const email = f.email.value.trim();
+  const password = f.password.value;
+  const csrf = f.csrf_token.value;
+  const r = await fetch('/api/v1/auth/login', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','X-CSRF-Token': csrf},
+    body: JSON.stringify({email, password})
+  });
+  const js = await r.json().catch(()=>({}));
+  if (!r.ok) {
+    const msg = js.error || 'Ошибка входа';
+    const e = document.getElementById('err'); e.style.display='block'; e.textContent=msg;
+    return;
+  }
+  location.href = '/';
+});
+</script>
+{% endblock %}

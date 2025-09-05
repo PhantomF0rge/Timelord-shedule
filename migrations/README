@@ -1,1 +1,1 @@
-Generic single-database configuration for Alembic (via Flask-Migrate).
+Generic single-database configuration for Alembic.

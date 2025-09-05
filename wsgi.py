@@ -1,2 +1,4 @@
 from app import create_app
-application = create_app()  # for WSGI servers like gunicorn: `--bind :8000 wsgi:application`
+app = create_app()
+if __name__ == "__main__":
+    app.run()

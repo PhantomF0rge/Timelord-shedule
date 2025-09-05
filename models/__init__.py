@@ -1,243 +1,202 @@
+from __future__ import annotations
 from datetime import datetime, time, date
-from enum import Enum as PyEnum
-
-from sqlalchemy import (
-    Enum, ForeignKey, UniqueConstraint, Index, Boolean, Date, DateTime, Time,
-    Integer, String, Text, JSON
-)
-from sqlalchemy.orm import relationship, Mapped, mapped_column
-
+from flask_login import UserMixin
+from sqlalchemy import Enum, UniqueConstraint, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from extensions import db
 
-# ---------- Enums ----------
-class EducationLevel(PyEnum):
-    VO = "VO"   # Высшее
-    SPO = "SPO" # Среднее проф.
+# Enums
+EducationLevelEnum = Enum("ВО", "СПО", name="education_level")
+BuildingTypeEnum = Enum("ВО", "СПО", name="building_type")
+UserRoleEnum = Enum("ADMIN", "TEACHER", name="user_role")
+ConflictStatusEnum = Enum("OPEN", "RESOLVED", name="conflict_status")
 
-class BuildingType(PyEnum):
-    VO = "VO"
-    SPO = "SPO"
-
-class ConflictStatus(PyEnum):
-    OPEN = "OPEN"
-    RESOLVED = "RESOLVED"
-
-
-# ---------- Association Tables ----------
-user_roles = db.Table(
-    "user_roles",
-    db.Column("user_id", db.Integer, db.ForeignKey("user.id", ondelete="CASCADE"), primary_key=True),
-    db.Column("role_id", db.Integer, db.ForeignKey("role.id", ondelete="CASCADE"), primary_key=True),
-    db.UniqueConstraint("user_id", "role_id", name="uq_user_roles_user_role"),
-)
-
-
-# ---------- Core Entities ----------
-class Role(db.Model):
+class User(UserMixin, db.Model):
+    __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(db.String(50), unique=True, nullable=False)
+    email: Mapped[str] = mapped_column(unique=True, index=True)
+    password_hash: Mapped[str]
+    role: Mapped[str] = mapped_column(UserRoleEnum, index=True)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    teacher_id: Mapped[int | None] = mapped_column(ForeignKey("teachers.id"), nullable=True)
 
-    def __repr__(self):
-        return f"<Role {self.name}>"
-
-
-class User(db.Model):
-    id: Mapped[int] = mapped_column(primary_key=True)
-    email: Mapped[str] = mapped_column(db.String(255), unique=True, nullable=False, index=True)
-    password_hash: Mapped[str] = mapped_column(db.String(255), nullable=False)
-    is_active: Mapped[bool] = mapped_column(db.Boolean, default=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-
-    teacher_id: Mapped[int | None] = mapped_column(ForeignKey("teacher.id", ondelete="SET NULL"), nullable=True)
-
-    roles = relationship("Role", secondary=user_roles, backref="users")
-
-    def __repr__(self):
-        return f"<User {self.email}>"
-
+    teacher: Mapped["Teacher"] = relationship(back_populates="user", uselist=False)
 
 class Teacher(db.Model):
+    __tablename__ = "teachers"
     id: Mapped[int] = mapped_column(primary_key=True)
-    full_name: Mapped[str] = mapped_column(db.String(255), nullable=False)
-    short_name: Mapped[str | None] = mapped_column(db.String(100))
-    external_id: Mapped[str | None] = mapped_column(db.String(100), unique=True)
+    full_name: Mapped[str]
+    short_name: Mapped[str | None]
+    external_id: Mapped[str | None]
 
-    availabilities = relationship("TeacherAvailability", back_populates="teacher", cascade="all, delete-orphan")
-    workload_limit = relationship("WorkloadLimit", back_populates="teacher", uselist=False, cascade="all, delete-orphan")
-
-    def __repr__(self):
-        return f"<Teacher {self.full_name}>"
-
+    user: Mapped["User"] = relationship(back_populates="teacher", uselist=False)
+    availabilities: Mapped[list["TeacherAvailability"]] = relationship(back_populates="teacher")
+    workload_limits: Mapped[list["WorkloadLimit"]] = relationship(back_populates="teacher")
+    schedules: Mapped[list["Schedule"]] = relationship(back_populates="teacher")
 
 class TeacherAvailability(db.Model):
+    __tablename__ = "teacher_availability"
     id: Mapped[int] = mapped_column(primary_key=True)
-    teacher_id: Mapped[int] = mapped_column(ForeignKey("teacher.id", ondelete="CASCADE"), nullable=False, index=True)
-    weekday: Mapped[int] = mapped_column(Integer, nullable=False)  # 0=Mon .. 6=Sun
-    available_from: Mapped[time | None] = mapped_column(Time)
-    available_to: Mapped[time | None] = mapped_column(Time)
-    is_day_off: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    # Optional date-specific override (if set, applies to that exact date)
-    date_override: Mapped[date | None] = mapped_column(Date, nullable=True)
+    teacher_id: Mapped[int] = mapped_column(ForeignKey("teachers.id"), index=True)
+    weekday: Mapped[int]  # 0=Mon ... 6=Sun
+    available_from: Mapped[time | None]
+    available_to: Mapped[time | None]
+    is_day_off: Mapped[bool] = mapped_column(default=False)
 
-    teacher = relationship("Teacher", back_populates="availabilities")
-
-    __table_args__ = (
-        Index("ix_availability_teacher_weekday", "teacher_id", "weekday"),
-    )
-
+    teacher: Mapped["Teacher"] = relationship(back_populates="availabilities")
 
 class WorkloadLimit(db.Model):
+    __tablename__ = "workload_limits"
     id: Mapped[int] = mapped_column(primary_key=True)
-    teacher_id: Mapped[int] = mapped_column(ForeignKey("teacher.id", ondelete="CASCADE"), unique=True, nullable=False)
-    hours_per_week: Mapped[int] = mapped_column(Integer, nullable=False)
+    teacher_id: Mapped[int] = mapped_column(ForeignKey("teachers.id"), index=True)
+    hours_per_week: Mapped[int]
 
-    teacher = relationship("Teacher", back_populates="workload_limit")
-
+    teacher: Mapped["Teacher"] = relationship(back_populates="workload_limits")
 
 class Group(db.Model):
+    __tablename__ = "groups"
     id: Mapped[int] = mapped_column(primary_key=True)
-    code: Mapped[str] = mapped_column(db.String(50), unique=True, nullable=False, index=True)
-    name: Mapped[str | None] = mapped_column(db.String(255))
-    students_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    education_level: Mapped[EducationLevel] = mapped_column(Enum(EducationLevel), nullable=False, default=EducationLevel.SPO)
-    external_id: Mapped[str | None] = mapped_column(db.String(100), unique=True)
+    code: Mapped[str] = mapped_column(unique=True, index=True)
+    name: Mapped[str | None]
+    students_count: Mapped[int] = mapped_column(default=0)
+    education_level: Mapped[str] = mapped_column(EducationLevelEnum, index=True)
+    external_id: Mapped[str | None]
 
-    def __repr__(self):
-        return f"<Group {self.code}>"
-
+    schedules: Mapped[list["Schedule"]] = relationship(back_populates="group")
+    curricula: Mapped[list["Curriculum"]] = relationship(back_populates="group")
+    assignments: Mapped[list["Assignment"]] = relationship(back_populates="group")
 
 class Subject(db.Model):
+    __tablename__ = "subjects"
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(db.String(255), nullable=False, unique=True)
-    short_name: Mapped[str | None] = mapped_column(db.String(100))
-    external_id: Mapped[str | None] = mapped_column(db.String(100), unique=True)
+    name: Mapped[str]
+    short_name: Mapped[str | None]
+    external_id: Mapped[str | None]
 
+    schedules: Mapped[list["Schedule"]] = relationship(back_populates="subject")
+    curricula: Mapped[list["Curriculum"]] = relationship(back_populates="subject")
+    assignments: Mapped[list["Assignment"]] = relationship(back_populates="subject")
 
 class Building(db.Model):
+    __tablename__ = "buildings"
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(db.String(255), nullable=False)
-    address: Mapped[str | None] = mapped_column(db.String(255))
-    type: Mapped[BuildingType | None] = mapped_column(Enum(BuildingType))
+    name: Mapped[str]
+    address: Mapped[str | None]
+    type: Mapped[str] = mapped_column(BuildingTypeEnum)
 
+    rooms: Mapped[list["Room"]] = relationship(back_populates="building")
 
 class RoomType(db.Model):
+    __tablename__ = "room_types"
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(db.String(100), nullable=False, unique=True)
-    requires_computers: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    sports: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    name: Mapped[str]
+    requires_computers: Mapped[bool] = mapped_column(default=False)
+    sports: Mapped[bool] = mapped_column(default=False)
 
+    rooms: Mapped[list["Room"]] = relationship(back_populates="room_type")
 
 class Room(db.Model):
+    __tablename__ = "rooms"
     id: Mapped[int] = mapped_column(primary_key=True)
-    building_id: Mapped[int] = mapped_column(ForeignKey("building.id", ondelete="RESTRICT"), nullable=False)
-    number: Mapped[str] = mapped_column(db.String(50), nullable=False)
-    capacity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    room_type_id: Mapped[int | None] = mapped_column(ForeignKey("room_type.id", ondelete="SET NULL"))
-    computers_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    building_id: Mapped[int] = mapped_column(ForeignKey("buildings.id"), index=True)
+    number: Mapped[str]
+    capacity: Mapped[int] = mapped_column(default=0)
+    room_type_id: Mapped[int] = mapped_column(ForeignKey("room_types.id"), index=True)
+    computers_count: Mapped[int] = mapped_column(default=0)
 
-    building = relationship("Building")
-    room_type = relationship("RoomType")
+    building: Mapped["Building"] = relationship(back_populates="rooms")
+    room_type: Mapped["RoomType"] = relationship(back_populates="rooms")
+    schedules: Mapped[list["Schedule"]] = relationship(back_populates="room")
 
-    __table_args__ = (
-        UniqueConstraint("building_id", "number", name="uq_room_building_number"),
-        Index("ix_room_building", "building_id"),
-    )
-
+    __table_args__ = (UniqueConstraint("building_id", "number", name="uq_room_building_number"),)
 
 class LessonType(db.Model):
+    __tablename__ = "lesson_types"
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(db.String(100), nullable=False, unique=True)
+    name: Mapped[str]
 
+    schedules: Mapped[list["Schedule"]] = relationship(back_populates="lesson_type")
 
 class TimeSlot(db.Model):
+    __tablename__ = "time_slots"
     id: Mapped[int] = mapped_column(primary_key=True)
-    order_no: Mapped[int] = mapped_column(Integer, nullable=False)
-    start_time: Mapped[time] = mapped_column(Time, nullable=False)
-    end_time: Mapped[time] = mapped_column(Time, nullable=False)
+    order_no: Mapped[int] = mapped_column(index=True)
+    start_time: Mapped[time]
+    end_time: Mapped[time]
 
-    __table_args__ = (
-        UniqueConstraint("order_no", name="uq_timeslot_order_no"),
-        Index("ix_timeslot_order_no", "order_no"),
-    )
-
+    schedules: Mapped[list["Schedule"]] = relationship(back_populates="time_slot")
 
 class Curriculum(db.Model):
+    __tablename__ = "curricula"
     id: Mapped[int] = mapped_column(primary_key=True)
-    group_id: Mapped[int] = mapped_column(ForeignKey("group.id", ondelete="CASCADE"), nullable=False)
-    subject_id: Mapped[int] = mapped_column(ForeignKey("subject.id", ondelete="CASCADE"), nullable=False)
-    total_hours: Mapped[int] = mapped_column(Integer, nullable=False)
-    hours_per_week: Mapped[int | None] = mapped_column(Integer)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"), index=True)
+    subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id"), index=True)
+    total_hours: Mapped[int]
+    hours_per_week: Mapped[int | None]
 
-    group = relationship("Group")
-    subject = relationship("Subject")
+    group: Mapped["Group"] = relationship(back_populates="curricula")
+    subject: Mapped["Subject"] = relationship(back_populates="curricula")
 
-    __table_args__ = (
-        UniqueConstraint("group_id", "subject_id", name="uq_curriculum_group_subject"),
-    )
-
+    __table_args__ = (UniqueConstraint("group_id", "subject_id", name="uq_curriculum_group_subject"),)
 
 class Assignment(db.Model):
+    __tablename__ = "assignments"
     id: Mapped[int] = mapped_column(primary_key=True)
-    teacher_id: Mapped[int] = mapped_column(ForeignKey("teacher.id", ondelete="CASCADE"), nullable=False)
-    group_id: Mapped[int] = mapped_column(ForeignKey("group.id", ondelete="CASCADE"), nullable=False)
-    subject_id: Mapped[int] = mapped_column(ForeignKey("subject.id", ondelete="CASCADE"), nullable=False)
+    teacher_id: Mapped[int] = mapped_column(ForeignKey("teachers.id"), index=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"), index=True)
+    subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id"), index=True)
 
-    teacher = relationship("Teacher")
-    group = relationship("Group")
-    subject = relationship("Subject")
+    teacher: Mapped["Teacher"] = relationship()
+    group: Mapped["Group"] = relationship(back_populates="assignments")
+    subject: Mapped["Subject"] = relationship(back_populates="assignments")
 
-    __table_args__ = (
-        UniqueConstraint("teacher_id", "group_id", "subject_id", name="uq_assignment_tuple"),
-    )
-
+    __table_args__ = (UniqueConstraint("teacher_id", "group_id", "subject_id", name="uq_assignment_t_g_s"),)
 
 class Schedule(db.Model):
+    __tablename__ = "schedules"
     id: Mapped[int] = mapped_column(primary_key=True)
-    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
-    time_slot_id: Mapped[int] = mapped_column(ForeignKey("time_slot.id", ondelete="RESTRICT"), nullable=False)
-    group_id: Mapped[int] = mapped_column(ForeignKey("group.id", ondelete="RESTRICT"), nullable=False, index=True)
-    subject_id: Mapped[int] = mapped_column(ForeignKey("subject.id", ondelete="RESTRICT"), nullable=False)
-    lesson_type_id: Mapped[int] = mapped_column(ForeignKey("lesson_type.id", ondelete="RESTRICT"), nullable=False)
-    teacher_id: Mapped[int] = mapped_column(ForeignKey("teacher.id", ondelete="RESTRICT"), nullable=False, index=True)
-    room_id: Mapped[int | None] = mapped_column(ForeignKey("room.id", ondelete="SET NULL"))
-    is_remote: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    note: Mapped[str | None] = mapped_column(Text)
+    date: Mapped[date] = mapped_column(index=True)
+    time_slot_id: Mapped[int] = mapped_column(ForeignKey("time_slots.id"), index=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"), index=True)
+    subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id"), index=True)
+    lesson_type_id: Mapped[int] = mapped_column(ForeignKey("lesson_types.id"), index=True)
+    teacher_id: Mapped[int] = mapped_column(ForeignKey("teachers.id"), index=True)
+    room_id: Mapped[int | None] = mapped_column(ForeignKey("rooms.id"), nullable=True, index=True)
+    is_remote: Mapped[bool] = mapped_column(default=False)
+    note: Mapped[str | None]
 
-    time_slot = relationship("TimeSlot")
-    group = relationship("Group")
-    subject = relationship("Subject")
-    lesson_type = relationship("LessonType")
-    teacher = relationship("Teacher")
-    room = relationship("Room")
-
+    time_slot: Mapped["TimeSlot"] = relationship(back_populates="schedules")
+    group: Mapped["Group"] = relationship(back_populates="schedules")
+    subject: Mapped["Subject"] = relationship(back_populates="schedules")
+    lesson_type: Mapped["LessonType"] = relationship(back_populates="schedules")
+    teacher: Mapped["Teacher"] = relationship(back_populates="schedules")
+    room: Mapped["Room"] = relationship(back_populates="schedules")
+    homeworks: Mapped[list["Homework"]] = relationship(back_populates="schedule")
 
 class Homework(db.Model):
+    __tablename__ = "homeworks"
     id: Mapped[int] = mapped_column(primary_key=True)
-    schedule_id: Mapped[int] = mapped_column(ForeignKey("schedule.id", ondelete="CASCADE"), nullable=False, unique=True)
-    text: Mapped[str] = mapped_column(Text, nullable=False)
-    attachments: Mapped[dict | None] = mapped_column(JSON)  # store list of files/links, etc.
-    deadline: Mapped[datetime | None] = mapped_column(DateTime)
-    created_by_teacher_id: Mapped[int | None] = mapped_column(ForeignKey("teacher.id", ondelete="SET NULL"))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    schedule_id: Mapped[int] = mapped_column(ForeignKey("schedules.id"), index=True)
+    text: Mapped[str]
+    attachments: Mapped[str | None]  # JSON as string for simplicity
+    deadline: Mapped[datetime | None]
+    created_by_teacher_id: Mapped[int | None] = mapped_column(ForeignKey("teachers.id"))
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
 
-    schedule = relationship("Schedule")
-    created_by_teacher = relationship("Teacher")
-
+    schedule: Mapped["Schedule"] = relationship(back_populates="homeworks")
 
 class Holiday(db.Model):
+    __tablename__ = "holidays"
     id: Mapped[int] = mapped_column(primary_key=True)
-    date: Mapped[date] = mapped_column(Date, nullable=False, unique=True, index=True)
-    name: Mapped[str] = mapped_column(db.String(255), nullable=False)
-
+    date: Mapped[date] = mapped_column(unique=True, index=True)
+    name: Mapped[str]
 
 class Conflict(db.Model):
+    __tablename__ = "conflicts"
     id: Mapped[int] = mapped_column(primary_key=True)
-    type: Mapped[str] = mapped_column(db.String(100), nullable=False)
-    schedule_id: Mapped[int | None] = mapped_column(ForeignKey("schedule.id", ondelete="SET NULL"))
-    payload_json: Mapped[dict | None] = mapped_column(JSON)
-    status: Mapped[ConflictStatus] = mapped_column(Enum(ConflictStatus), default=ConflictStatus.OPEN, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    resolved_at: Mapped[datetime | None] = mapped_column(DateTime)
-
-    schedule = relationship("Schedule")
+    type: Mapped[str]
+    schedule_id: Mapped[int | None] = mapped_column(ForeignKey("schedules.id"), nullable=True)
+    payload_json: Mapped[str | None]
+    status: Mapped[str] = mapped_column(ConflictStatusEnum, default="OPEN", index=True)
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    resolved_at: Mapped[datetime | None]
