@@ -1,176 +1,255 @@
-// ===== utils =====
-const $ = (sel, root=document)=>root.querySelector(sel);
-const show = (el)=>{ if(el) el.hidden = false; };
-const hide = (el)=>{ if(el) el.hidden = true; };
-const todayISO = ()=> new Date().toISOString().slice(0,10);
+/* ========= utils ========= */
+const $  = (sel, root=document) => root.querySelector(sel);
+const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+const show = (el) => el && (el.hidden = false);
+const hide = (el) => el && (el.hidden = true);
 
-async function getJSON(url){
-  const r = await fetch(url);
-  if(!r.ok) throw new Error(`${r.status} ${url}`);
-  return r.json();
+function todayISO() {
+  const d = new Date();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+function parseTimeToDate(hhmm) {
+  if (!hhmm) return null;
+  const [h, m] = String(hhmm).split(':').map(Number);
+  const d = new Date();
+  d.setHours(h||0, m||0, 0, 0);
+  return d;
+}
+function statusForSlot(start, end, isRemote=false) {
+  const s = parseTimeToDate(start), e = parseTimeToDate(end), n = new Date();
+  if (!s || !e) return 'past';
+  if (n < s) return isRemote ? 'remote-next' : 'next';
+  if (n > e) return isRemote ? 'remote-past' : 'past';
+  return isRemote ? 'remote' : 'now';
 }
 
-// ===== typeahead =====
-(function setupTypeahead(){
-  const API = "/api/v1/suggest";
-  const input = $("#search-input");
-  const box = $("#typeahead");
-  if(!input || !box) return;
+/* ========= API ========= */
+const API_PREFIX = '/api/v1';
+
+async function apiGet(url) {
+  const r = await fetch(url, { headers: { 'Accept': 'application/json' }});
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+async function fetchSuggest(q, limit=10) {
+  if (!q) return [];
+  try {
+    const data = await apiGet(`${API_PREFIX}/suggest?q=${encodeURIComponent(q)}&limit=${limit}`);
+    return Array.isArray(data.items) ? data.items : [];
+  } catch {
+    return [];
+  }
+}
+async function fetchGroupSchedule(code, dateISO, range='day') {
+  try {
+    const url = `${API_PREFIX}/schedule/group/${encodeURIComponent(code)}?date=${encodeURIComponent(dateISO)}&range=${encodeURIComponent(range)}`;
+    return await apiGet(url);
+  } catch {
+    return range === 'week' ? { days: [] } : { lessons: [] };
+  }
+}
+
+/* ========= Typeahead ========= */
+function mountTypeahead() {
+  const input = $('#search-input');
+  const box   = $('#typeahead');
+  const clearBtn = $('#search-clear');
+
+  if (!input || !box) return;
 
   let timer = null;
 
-  async function fetchSuggest(q){
-    try{
-      const url = `${API}?q=${encodeURIComponent(q)}&limit=10`;
-      const data = await getJSON(url);
-      return data.items || [];
-    }catch(e){ return []; }
-  }
-
-  function render(items){
-    if(!items.length){ hide(box); box.innerHTML=""; return; }
+  function render(items) {
+    if (!items.length) {
+      box.innerHTML = '';
+      hide(box);
+      return;
+    }
     box.innerHTML = items.map(i => `
-      <div class="typeahead-item" data-type="${i.type}" data-id="${i.id}" data-code="${i.code||''}">
-        <span class="typeahead-type">${i.type}</span>
-        <span class="typeahead-label">${i.label}</span>
+      <div class="typeahead-item" data-type="${i.type||''}" data-id="${i.id||''}" data-code="${i.code||''}">
+        <span class="typeahead-type">${i.type||''}</span>
+        <span class="typeahead-label">${i.label||i.code||''}</span>
       </div>
-    `).join("");
+    `).join('');
     show(box);
   }
 
-  box.addEventListener("click", e=>{
-    const item = e.target.closest(".typeahead-item");
-    if(!item) return;
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    if (timer) clearTimeout(timer);
+    if (!q) { render([]); return; }
+    timer = setTimeout(async () => {
+      render(await fetchSuggest(q));
+    }, 200);
+  });
+
+  box.addEventListener('click', (e) => {
+    const item = e.target.closest('.typeahead-item');
+    if (!item) return;
     const type = item.dataset.type;
     const code = item.dataset.code;
-    if(type === "group" && code){
-      localStorage.setItem("last_group", code);
-      document.dispatchEvent(new CustomEvent("select-group", { detail: { code } }));
-      input.value = code;
+    if (type === 'group' && code) {
+      localStorage.setItem('last_group', code);
+      document.dispatchEvent(new CustomEvent('select-group', { detail: { code } }));
     }
     hide(box);
   });
 
-  input.addEventListener("input", ()=>{
-    const q = input.value.trim();
-    if(timer) clearTimeout(timer);
-    if(!q){ hide(box); return; }
-    timer = setTimeout(async ()=>{ render(await fetchSuggest(q)); }, 250);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { hide(box); }
   });
 
-  $("#search-clear")?.addEventListener("click", ()=>{ input.value=""; hide(box); });
-})();
-
-// ===== schedule render =====
-function statusForSlot(start,end,isRemote=false){
-  const p = s=>{ const [h,m]=s.split(":").map(Number); const d=new Date(); d.setHours(h,m,0,0); return d; };
-  const n = new Date(), S=p(start), E=p(end);
-  if(n<S) return isRemote?'remote-next':'next';
-  if(n>E) return isRemote?'remote-past':'past';
-  return isRemote?'remote':'now';
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      input.value = '';
+      hide(box);
+      input.focus();
+    });
+  }
 }
 
-function lessonView(l){
-  if(l.is_break){
-    return `<div class="break-item"><strong>Перерыв</strong> · ${l.from}–${l.to}</div>`;
+/* ========= Schedule render ========= */
+function lessonCard(l) {
+  if (l.is_break) {
+    return `<div class="break-item"><strong>Перерыв</strong> · ${l.from||''}–${l.to||''}</div>`;
   }
-  const st = statusForSlot(l.time_slot.start_time, l.time_slot.end_time, l.is_remote);
-  const cls = ["lesson"];
-  if(st.includes("now")) cls.push("now");
-  else if(st.includes("next")) cls.push("next");
-  else if(st.includes("past")) cls.push("past");
-  if(l.is_remote) cls.push("remote");
+  const isRemote = !!(l.is_remote || l.remote || l.online);
+  const t = l.time_slot || {};
+  const status = statusForSlot(t.start_time, t.end_time, isRemote);
+  const cls = ['lesson'];
+  if (status.includes('now'))  cls.push('now');
+  if (status.includes('next')) cls.push('next');
+  if (status.includes('past')) cls.push('past');
+  if (isRemote) cls.push('remote');
+
+  const subj = l.subject || {};
+  const lt   = l.lesson_type || {};
+  const teach= l.teacher || {};
+  const room = l.room;
+
+  const hw = l.homework && (l.homework.text || l.homework.title) ? ` · ДЗ: ${l.homework.text || l.homework.title}` : '';
 
   return `
-  <article class="${cls.join(' ')}">
-    <div class="title">${l.subject.name} <span class="meta">· ${l.lesson_type?.name||"Занятие"}</span></div>
-    <div class="meta">
-      ${l.time_slot.start_time}–${l.time_slot.end_time} · №${l.time_slot.order_no}
-      ${l.room ? " · ауд. " + l.room.number : " · СДО"}
-      · ${l.teacher.full_name}
-      ${l.homework ? " · ДЗ: " + l.homework.text : ""}
-    </div>
-  </article>`;
+    <article class="${cls.join(' ')}">
+      <div class="title">${subj.name || subj.title || 'Предмет'} <span class="meta">· ${lt.name || lt.title || 'Занятие'}</span></div>
+      <div class="meta">
+        ${(t.start_time||'')}${t.end_time?'–'+t.end_time:''}
+        ${t.order_no ? ` · №${t.order_no}` : ''}
+        ${room ? ` · ауд. ${room.number||room.name||''}` : ' · СДО'}
+        ${teach.full_name ? ` · ${teach.full_name}` : ''}
+        ${hw}
+      </div>
+    </article>
+  `;
 }
 
-function renderDay(payload){
-  const root = $("#schedule-root");
-  if(!payload || !payload.lessons || !payload.lessons.length){
-    root.dataset.state="empty";
+function renderDay(payload) {
+  const root = $('#schedule-root');
+  if (!root) return;
+  const lessons = (payload && payload.lessons) || [];
+  if (!lessons.length) {
+    root.dataset.state = 'empty';
     root.innerHTML = `<div class="muted">Нет занятий на выбранный день.</div>`;
     return;
   }
-  root.dataset.state="filled";
-  root.innerHTML = payload.lessons.map(lessonView).join("");
+  root.dataset.state = 'filled';
+  root.innerHTML = lessons.map(lessonCard).join('');
 }
 
-function renderWeek(payload){
-  const root = $("#schedule-root");
-  if(!payload || !payload.days || !payload.days.length){
-    root.dataset.state="empty";
-    root.innerHTML = `<div class="muted">Нет занятий за выбранную неделю.</div>`;
+function renderWeek(payload) {
+  const root = $('#schedule-root');
+  if (!root) return;
+  const days = (payload && payload.days) || [];
+  if (!days.length) {
+    root.dataset.state = 'empty';
+    root.innerHTML = `<div class="muted">Нет занятий на выбранную неделю.</div>`;
     return;
   }
-  root.dataset.state="filled";
-  root.innerHTML = `
-    <div class="week-grid">
-      ${payload.days.map(d=>`
-        <div class="glass day-card">
-          <div class="day-title">${d.date}</div>
-          ${d.lessons && d.lessons.length ? d.lessons.map(lessonView).join("") : `<div class="muted">—</div>`}
-        </div>
-      `).join("")}
-    </div>`;
+  root.dataset.state = 'filled';
+  // 3 карточки в строку
+  root.style.display = 'grid';
+  root.style.gridTemplateColumns = 'repeat(auto-fill, minmax(300px, 1fr))';
+  root.style.gap = '12px';
+  root.innerHTML = days.map(d => {
+    const dateStr = d.date || '';
+    const list = (d.lessons||[]).map(lessonCard).join('') || `<div class="muted">Нет занятий</div>`;
+    return `
+      <section class="glass" style="padding:12px;border-radius:12px">
+        <div class="meta" style="margin-bottom:8px">${dateStr}</div>
+        ${list}
+      </section>
+    `;
+  }).join('');
 }
 
-// ===== schedule loader (day/week) =====
-(async function boot(){
-  const quick = $("#quick-result");
-  const dateInput = $("#date-input");
-  const btnDay = $("#btn-day");
-  const btnWeek = $("#btn-week");
+/* ========= Controls (date/range) ========= */
+function mountControls() {
+  const btnDay  = $('#btn-range-day')   || $('#view-day')   || $('[data-view="day"]');
+  const btnWeek = $('#btn-range-week')  || $('#view-week')  || $('[data-view="week"]');
+  const inputDate = $('#date-input')    || $('#date-picker')|| $('input[type="date"]');
 
-  const last = localStorage.getItem("last_group");
-  if(last && quick){ quick.innerHTML = `Показываю расписание для группы <strong>${last}</strong>.`; show(quick); }
-
-  function uiRange(){ return btnWeek?.classList.contains("active") ? "week" : "day"; }
-  function setRange(r){ 
-    btnDay?.classList.toggle("active", r==="day");
-    btnWeek?.classList.toggle("active", r==="week");
+  function currentGroup() {
+    return localStorage.getItem('last_group') || '';
   }
 
-  async function load(range, dateStr){
-    const code = localStorage.getItem("last_group");
-    if(!code) return;
-    const base = `/api/v1/schedule/group/${encodeURIComponent(code)}?date=${dateStr}&range=${range}`;
-    const data = await getJSON(base);
-    if(range === "week") renderWeek(data);
-    else renderDay(data);
+  async function loadAndRender(range) {
+    const code = currentGroup();
+    const dateISO = (inputDate && inputDate.value) || todayISO();
+    const payload = await fetchGroupSchedule(code, dateISO, range);
+    if (range === 'week') renderWeek(payload); else renderDay(payload);
   }
 
-  if(dateInput && !dateInput.value) dateInput.value = todayISO();
+  if (inputDate) {
+    if (!inputDate.value) inputDate.value = todayISO();
+    inputDate.addEventListener('change', async () => {
+      const isWeek = (btnWeek && btnWeek.classList.contains('active')) || (btnWeek && btnWeek.getAttribute('aria-pressed')==='true');
+      await loadAndRender(isWeek ? 'week' : 'day');
+    });
+  }
 
-  // Первичная загрузка
-  await load(uiRange(), dateInput ? dateInput.value : todayISO());
+  if (btnDay) {
+    btnDay.addEventListener('click', async () => {
+      btnDay.classList.add('active');
+      if (btnWeek) btnWeek.classList.remove('active');
+      await loadAndRender('day');
+    });
+  }
 
-  btnDay?.addEventListener("click", async ()=>{
-    setRange("day");
-    await load("day", dateInput.value || todayISO());
-  });
-  btnWeek?.addEventListener("click", async ()=>{
-    setRange("week");
-    await load("week", dateInput.value || todayISO());
-  });
-  dateInput?.addEventListener("change", async ()=>{
-    await load(uiRange(), dateInput.value || todayISO());
+  if (btnWeek) {
+    btnWeek.addEventListener('click', async () => {
+      btnWeek.classList.add('active');
+      if (btnDay) btnDay.classList.remove('active');
+      await loadAndRender('week');
+    });
+  }
+
+  // первичная загрузка, если есть сохранённая группа
+  document.addEventListener('select-group', async (e) => {
+    const isWeek = (btnWeek && btnWeek.classList.contains('active')) || (btnWeek && btnWeek.getAttribute('aria-pressed')==='true');
+    await loadAndRender(isWeek ? 'week' : 'day');
   });
 
-  // Когда выбрали группу в подсказках
-  document.addEventListener("select-group", async ()=>{
-    await load(uiRange(), dateInput.value || todayISO());
-    if(quick){
-      const code = localStorage.getItem("last_group");
-      quick.innerHTML = `Показываю расписание для группы <strong>${code}</strong>.`; show(quick);
-    }
-  });
+  // если группа уже сохранена — показать сразу
+  if (localStorage.getItem('last_group')) {
+    loadAndRender('day');
+  }
+}
+
+/* ========= Boot ========= */
+(function boot() {
+  // инициализация подсказок
+  mountTypeahead();
+
+  // быстрый баннер с выбранной группой (если есть)
+  const code = localStorage.getItem('last_group');
+  const quick = $('#quick-result');
+  if (code && quick) {
+    quick.innerHTML = `Показываю расписание для группы <strong>${code}</strong>.`;
+    show(quick);
+  }
+
+  // инициализация контролов и первичная отрисовка
+  mountControls();
 })();
